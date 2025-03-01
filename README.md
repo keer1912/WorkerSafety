@@ -2,9 +2,12 @@
 ## Fall Detector
 Using the M5STICKCPlus this program detects falls using its inbuilt accelerometer. Then the data is sent over to a pi which is set up as the supervisor's machine on a construction worksite to know which worker has fell down.
 
-When a fall is detected, a beep is sound out from the device as well.
+When a fall is detected, the device will sound out a beep from its buzzer as well.
 
-Once the team gets the Bluetooth beacons which are currently unavailable, we will be able to know where the worker is on the site to give medical attention.
+Here is a diagram that depicts the rough idea for the set-up:\
+![image](https://github.com/user-attachments/assets/8b9f2648-8e40-4977-bf85-f313ca51d080)
+
+Optionally, bluetooth beacons can be implemented to find the location of the worker on site to give medical attention
 
 ## Setup for fall detector code
 1.  Configure the WiFi and MQTT settings in the code:
