@@ -3,11 +3,11 @@
 #include <PubSubClient.h>
 
 // WiFi and MQTT settings
-const char* ssid = "your-internet-ssid";
-const char* password = "your-internet-pass";
-const char* mqtt_server = "own pi ip (run hostname -I on pi) ";
+const char* ssid = "your-internet-ssid"; // wifi hotspot name
+const char* password = "your-internet-pass"; // wifi hotspot password
+const char* mqtt_server = "raspberry pi ip"; // raspberry pi IP address (run 'hostname -I' on pi terminal or IP Scan)
 const int mqtt_port = 1883;
-const char* mqtt_user = "raspberry-pi-login-username;";
+const char* mqtt_user = "raspberry-pi-login-username"; // Your raspberry pi username
 const char* mqtt_password = "12345678"; // Your raspberry pi login password if have   
 
 // Worker and floor information
