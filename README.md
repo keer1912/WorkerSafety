@@ -12,7 +12,7 @@ Once the team gets the Bluetooth beacons which are currently unavailable, we wil
     -   Set your WiFi SSID and password
         
     -   Set the MQTT broker IP address (your Raspberry Pi IP) 
-	    - To find RPI IP you can run `hostname I` on the pi terminal or IP Scan.
+	    - To find RPI IP you can run `hostname -I` on the pi terminal or IP Scan.
         
     -   Configure MQTT username and password if applicable
 
@@ -28,22 +28,27 @@ Once the team gets the Bluetooth beacons which are currently unavailable, we wil
     
 ###  Requirements
 -   Python 3.x
+-   Flask
 -   paho-mqtt library
     
 ###  Installation
 
-1.  Ensure Python 3.x is installed on your system.
-
-3.  Install the paho-mqtt library:
- `pip install paho-mqtt`
-4. Add the mqtt_subscriber.py into your pi
+1. Ensure Python 3.x is installed on your Pi.
+2. Create and activate Python environment, [setup docs](https://docs.python.org/3/tutorial/venv.html).
+3. Install required libraries:
+  `pip install -r requirements.txt`
+4. Add folder `/templates` and file `app.py` to your Pi
 5. Run using the command
-`python3 mqtt_subscriber.py`
+  `python app.py`
 
 ### Output on RPI
 -   Connection status to the MQTT broker\
    ![image](https://github.com/user-attachments/assets/6a1b83b9-8bac-40e9-949e-c9dff233a0e8)
-    
+
+-   Dashboard URL\
+    ![image](https://github.com/user-attachments/assets/f6e52951-f2af-4a40-a914-437866315160) \
+  	- To view the dashboard on other devices like a laptop, use the link `http://<Pi's IP>:5000`, from the image example, the link is `http://192.168.86.220:5000`
+
 -   Subscription confirmations
     
 -   Received messages with their topics and payloads
