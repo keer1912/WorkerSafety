@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Worker Safety Dashboard</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+      }
+      h1 {
+        color: #333;
+      }
+      .floor-section {
+        margin-bottom: 30px;
+      }
+      .worker-card {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 15px;
+        margin: 10px;
+        width: 250px;
+        display: inline-block;
+        background-color: #f9f9f9;
+      }
+      .alert {
+        background-color: #ffdddd;
+      }
+      .worker-name {
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
+      .sensor-value {
+        margin: 5px 0;
+      }
+      .status-ok {
+        color: green;
+      }
+      .status-alert {
+        color: red;
+        font-weight: bold;
+      }
+      .template {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Worker Safety Dashboard</h1>
+
+    <!-- Main container for dynamic content -->
+    <div id="dashboard-container"></div>
+
+    <!-- Templates -->
+    <div class="templates template">
+      <!-- Floor template -->
+      <div id="floor-template" class="floor-section">
+        <h2><span class="floor-id"></span></h2>
+        <div class="floor-workers"></div>
+      </div>
+
+      <!-- Worker template -->
+      <div id="worker-template" class="worker-card">
+        <div class="worker-name">Worker: <span class="worker-id"></span></div>
+        <div class="sensor-value">
+          Heart Rate: <span class="heartrate"></span> bpm
+        </div>
+        <div class="sensor-value">Battery: <span class="battery"></span>%</div>
+        <div class="sensor-value">
+          Fall Status: <span class="status"></span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Keep track of previous data state
+      let previousData = {};
+
+      // Keep references to DOM elements by ID
+      const elementRefs = {
+        floors: {}, // floorId -> DOM element
+        workers: {}, // floorId_workerId -> DOM element
+      };
+
+      function updateDashboard() {
+        $.getJSON("/api/data", function (data) {
+          // Track which floors/workers we've processed to detect removals
+          const processedFloors = new Set();
+          const processedWorkers = new Set();
+
+          // Process each floor
+          for (const floorId in data) {
+            processedFloors.add(floorId);
+            const floorData = data[floorId];
+
+            // Format floor ID for display
+            let displayFloorId = floorId.toLowerCase().startsWith("floor")
+              ? "Floor " + floorId.replace(/floor/i, "")
+              : "Floor " + floorId;
+
+            // Check if this floor section already exists
+            if (!elementRefs.floors[floorId]) {
+              // Floor is new, create it
+              const floorSection = $("#floor-template")
+                .clone()
+                .removeClass("template");
+              floorSection.find(".floor-id").text(displayFloorId);
+              $("#dashboard-container").append(floorSection);
+
+              // Store reference to this floor
+              elementRefs.floors[floorId] = floorSection;
+              elementRefs.workers[floorId] = {};
+            }
+
+            // Process each worker on this floor
+            for (const workerId in floorData) {
+              const workerKey = `${floorId}_${workerId}`;
+              processedWorkers.add(workerKey);
+
+              const worker = floorData[workerId];
+              const workerHasChanged =
+                !previousData[floorId] ||
+                !previousData[floorId][workerId] ||
+                JSON.stringify(previousData[floorId][workerId]) !==
+                  JSON.stringify(worker);
+
+              if (!elementRefs.workers[workerKey]) {
+                // Worker is new, create card
+                const workerCard = $("#worker-template")
+                  .clone()
+                  .removeClass("template");
+                workerCard.find(".worker-id").text(workerId);
+
+                // Add the worker card to its floor section
+                elementRefs.floors[floorId]
+                  .find(".floor-workers")
+                  .append(workerCard);
+
+                // Store reference to this worker
+                elementRefs.workers[workerKey] = workerCard;
+              }
+
+              // Only update worker card if data changed
+              if (workerHasChanged) {
+                const workerCard = elementRefs.workers[workerKey];
+
+                // Update sensor values
+                workerCard.find(".heartrate").text(worker.heartrate || "N/A");
+                workerCard.find(".battery").text(worker.battery || "N/A");
+
+                // Update fall status
+                const isFallen = worker.falldetect === "Fall Detected!";
+                const statusSpan = workerCard.find(".status");
+
+                if (isFallen) {
+                  workerCard.addClass("alert");
+                  statusSpan
+                    .removeClass("status-ok")
+                    .addClass("status-alert")
+                    .text("FALLEN!");
+                } else {
+                  workerCard.removeClass("alert");
+                  statusSpan
+                    .removeClass("status-alert")
+                    .addClass("status-ok")
+                    .text("OK");
+                }
+              }
+            }
+          }
+
+          // Remove workers that no longer exist in the data
+          for (const workerKey in elementRefs.workers) {
+            if (workerKey !== "undefined" && !processedWorkers.has(workerKey)) {
+              elementRefs.workers[workerKey].remove();
+              delete elementRefs.workers[workerKey];
+            }
+          }
+
+          // Remove floors that no longer exist in the data
+          for (const floorId in elementRefs.floors) {
+            if (!processedFloors.has(floorId)) {
+              elementRefs.floors[floorId].remove();
+              delete elementRefs.floors[floorId];
+            }
+          }
+
+          // Update previous data reference
+          previousData = JSON.parse(JSON.stringify(data));
+        });
+      }
+
+      // Optimize polling with dynamic delays
+      function scheduleNextUpdate() {
+        setTimeout(() => {
+          const startTime = performance.now();
+          updateDashboard();
+          const elapsed = performance.now() - startTime;
+
+          // Schedule next update with dynamic delay (min 50ms)
+          const nextDelay = Math.max(50, 100 - elapsed);
+          scheduleNextUpdate();
+        }, 50);
+      }
+
+      // Initial update and start polling
+      updateDashboard();
+      scheduleNextUpdate();
+    </script>
+  </body>
+</html>
