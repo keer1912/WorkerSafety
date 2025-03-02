@@ -5,7 +5,7 @@ Using the M5STICKCPlus this program detects falls using its inbuilt acceleromete
 When a fall is detected, the device will sound out a beep from its buzzer as well.
 
 Here is a diagram that depicts the rough idea for the set-up:\
-![image](https://github.com/user-attachments/assets/8b9f2648-8e40-4977-bf85-f313ca51d080)
+![image](https://github.com/user-attachments/assets/7723535f-9781-433c-a781-9c0074211dd4)
 
 Optionally, bluetooth beacons can be implemented to find the location of the worker on site to give medical attention
 
