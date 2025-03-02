@@ -37,11 +37,11 @@ Optionally, bluetooth beacons can be implemented to find the location of the wor
 ###  Installation
 
 1. Ensure Python 3.x is installed on your Pi.
-2. Create and activate Python environment, [setup docs](https://docs.python.org/3/tutorial/venv.html).
-3. Install required libraries:
+2. Create your own Python environment `python -m venv name-of-your-env` and activate it `source name-of-your-env/bin/activate`. For more info, visit https://docs.python.org/3/tutorial/venv.html.
+4. Install required libraries:
   `pip install -r requirements.txt`
-4. Add folder `/templates` and file `app.py` to your Pi
-5. Run using the command
+5. Add folder `/templates` and file `app.py` to your Pi
+6. Run using the command
   `python app.py`
 
 ### Output on RPI
