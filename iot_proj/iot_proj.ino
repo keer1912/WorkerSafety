@@ -3,12 +3,12 @@
 #include <PubSubClient.h>
 
 // WiFi and MQTT settings
-const char* ssid = "your-internet-ssid"; // wifi hotspot name
-const char* password = "your-internet-pass"; // wifi hotspot password
-const char* mqtt_server = "raspberry pi ip"; // raspberry pi IP address (run 'hostname -I' on pi terminal or IP Scan)
+const char* ssid = "Xiaomi Nya"; // wifi hotspot name
+const char* password = "itamenekos"; // wifi hotspot password
+const char* mqtt_server = "192.168.1.103"; // raspberry pi IP address (run 'hostname -I' on pi terminal or IP Scan)
 const int mqtt_port = 1883;
-const char* mqtt_user = "raspberry-pi-login-username"; // Your raspberry pi username
-const char* mqtt_password = "12345678"; // Your raspberry pi login password if have   
+const char* mqtt_user = "zyanpi"; // Your raspberry pi username
+const char* mqtt_password = "ilovenekopi"; // Your raspberry pi login password if have   
 
 // Worker and floor information
 const char* workerID = "worker1";
@@ -18,6 +18,7 @@ const char* floorID = "floor1";
 char topic_fall[50];
 char topic_heartrate[50];
 char topic_battery[50];
+char topic_recovery[50]; // [ADDED] topic to indicate if the user has recovered from the fall
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -29,6 +30,11 @@ float accMagnitude;
 float prevMagnitude = 1.0;  // Start with gravity magnitude
 float fallThreshold = 0.5;   // Threshold for detecting free-fall
 float impactThreshold = 2.0; // Threshold for detecting impact
+float stableThreshold = 1.0; // [ADDED] Threshold for stable position (upright)
+
+// [ADDED] State machine
+enum UserState {STANDING, FALLEN, STANDING_UP};
+UserState userState = STANDING;
 
 bool possibleFall = false;
 unsigned long fallDetectionTime = 0;
@@ -70,6 +76,7 @@ void setup() {
   M5.Lcd.println(topic_fall);
   M5.Lcd.println(topic_heartrate);
   M5.Lcd.println(topic_battery);
+  M5.Lcd.println(topic_recovery); // [ADDED]
   delay(3000);
 }
 
@@ -130,43 +137,7 @@ void loop() {
   accMagnitude = sqrt(accX*accX + accY*accY + accZ*accZ);
 
   // Fall detection algorithm: Look for free-fall followed by impact
-  if (!possibleFall && accMagnitude < fallThreshold) {
-    // Possible free-fall detected
-    possibleFall = true;
-    fallDetectionTime = millis();
-  } else if (possibleFall && (millis() - fallDetectionTime < 500)) {
-    // Within 500ms of detecting possible free-fall, look for impact
-    if (accMagnitude > impactThreshold) {
-      // Impact detected after free-fall - FALL DETECTED
-      M5.Lcd.fillScreen(RED);
-      M5.Lcd.setCursor(0, 0);
-      M5.Lcd.println("FALL DETECTED!");
-      M5.Lcd.println("Sending alert...");
-      
-      // Trigger beep
-      M5.Beep.beep();  // Start beeping
-      delay(1000);     // Beep for 1 second
-      M5.Beep.mute();  // Stop beeping
-
-      // Publish fall detection data if connected
-      // When detecting a fall
-      if (mqttConnected) {
-        M5.Lcd.println("Publishing alert...");
-        bool success = client.publish(topic_fall, "Fall Detected!");
-        if (success) {
-          M5.Lcd.println("Alert published!");
-        } else {
-          M5.Lcd.println("Publish failed!");
-        }
-      }
-      
-      possibleFall = false;
-      delay(debounceTime);  // Prevent multiple triggers
-    }
-  } else if (possibleFall && (millis() - fallDetectionTime >= 500)) {
-    // Reset if no impact detected within timeframe
-    possibleFall = false;
-  }
+  fall_detection();
   
   // Update display every 1 second
   if (millis() - lastUpdateTime > 1000) {
@@ -233,4 +204,44 @@ void reconnect() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
+}
+
+void fall_detection() {
+  if (!possibleFall && accMagnitude < fallThreshold) {
+    // Possible free-fall detected
+    possibleFall = true;
+    fallDetectionTime = millis();
+  } else if (possibleFall && (millis() - fallDetectionTime < 500)) {
+    // Within 500ms of detecting possible free-fall, look for impact
+    if (accMagnitude > impactThreshold) {
+      // Impact detected after free-fall - FALL DETECTED
+      M5.Lcd.fillScreen(RED);
+      M5.Lcd.setCursor(0, 0);
+      M5.Lcd.println("FALL DETECTED!");
+      M5.Lcd.println("Sending alert...");
+      
+      // Trigger beep
+      M5.Beep.beep();  // Start beeping
+      delay(1000);     // Beep for 1 second
+      M5.Beep.mute();  // Stop beeping
+
+      // Publish fall detection data if connected
+      // When detecting a fall
+      if (mqttConnected) {
+        M5.Lcd.println("Publishing alert...");
+        bool success = client.publish(topic_fall, "Fall Detected!");
+        if (success) {
+          M5.Lcd.println("Alert published!");
+        } else {
+          M5.Lcd.println("Publish failed!");
+        }
+      }
+      
+      possibleFall = false;
+      delay(debounceTime);  // Prevent multiple triggers
+    }
+  } else if (possibleFall && (millis() - fallDetectionTime >= 500)) {
+    // Reset if no impact detected within timeframe
+    possibleFall = false;
+  }
 }
