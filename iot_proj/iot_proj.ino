@@ -1,6 +1,12 @@
 #include <M5StickCPlus.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <Wire.h>
+#include "MAX30100_PulseOximeter.h"
+
+// Heart rate sensor pins
+#define SDA_PIN 32  
+#define SCL_PIN 33  
 
 // WiFi and MQTT settings
 const char* ssid = "your-internet-ssid"; // wifi hotspot name
@@ -21,6 +27,7 @@ char topic_battery[50];
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+PulseOximeter pox;  
 
 // Accelerometer settings
 float accX, accY, accZ;
@@ -30,12 +37,12 @@ float prevMagnitude = 1.0;  // Start with gravity magnitude
 float fallThreshold = 0.5;   // Threshold for detecting free-fall
 float impactThreshold = 2.0; // Threshold for detecting impact
 
-bool possibleFall = false;
+bool possibleFall = false;  
 unsigned long fallDetectionTime = 0;
 const int debounceTime = 2000;  // Prevent multiple detections
 
 // Simulated heart rate and battery level
-int heartRate = 75;
+float heartRate;
 int batteryLevel = 100; // This should be the actual battery read so that the "supervisor" can know who's device need to be changed/charged
 
 unsigned long lastUpdateTime = 0;
@@ -46,9 +53,16 @@ unsigned long lastReconnectAttempt = 0;
 bool wifiConnected = false;
 bool mqttConnected = false;
 
+// Callback function for heart rate sensor
+void onBeatDetected() {
+    Serial.println("Beat detected!");
+}
+
 void setup() {
   M5.begin();
   M5.IMU.Init();
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Serial.begin(115200);
   M5.Lcd.setRotation(3);
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextSize(2);
@@ -71,6 +85,16 @@ void setup() {
   M5.Lcd.println(topic_heartrate);
   M5.Lcd.println(topic_battery);
   delay(3000);
+
+  // For heart beat sensor
+  if (!pox.begin()) {
+        M5.Lcd.setCursor(10, 10);
+        M5.Lcd.println("MAX30100 NOT FOUND");
+        Serial.println("Sensor initialization failed");
+        while (1);
+  }
+
+  pox.setOnBeatDetectedCallback(onBeatDetected);
 }
 
 void connectWiFi() {
@@ -99,6 +123,7 @@ void connectWiFi() {
 
 void loop() {
   M5.update();  // Process button inputs
+  pox.update();
   
   // Check WiFi connection
   if (WiFi.status() != WL_CONNECTED) {
@@ -177,6 +202,11 @@ void loop() {
   // Publish heart rate and battery every 5 seconds
   if (millis() - lastPublishTime > 5000) {
     lastPublishTime = millis();
+
+    // For heart rate sensor - need to keep here if not, wont work
+    heartRate = pox.getHeartRate();  // Update heart rate value
+    Serial.printf("BPM: %0.1f\n", heartRate);
+
     updateSensors();
     publishData();
   }
@@ -191,7 +221,7 @@ void updateDisplay() {
     M5.Lcd.println("Fall Detector");
     
     M5.Lcd.printf("Acc: %.2f\n", accMagnitude);
-    M5.Lcd.printf("HR: %d BPM\n", heartRate);
+    M5.Lcd.printf("HR: %.1f BPM\n", heartRate);
     M5.Lcd.printf("Batt: %d%%\n", batteryLevel);
     
     // Display connection status
@@ -202,9 +232,6 @@ void updateDisplay() {
 }
 
 void updateSensors() {
-  // Simulate heart rate (more realistic pattern)
-  heartRate = random(65, 85);  // Simulate heart rate between 65-85 bpm
-  
   // Simulate battery drain
   batteryLevel -= random(0, 2);
   if (batteryLevel < 0) batteryLevel = 100;
@@ -214,7 +241,7 @@ void publishData() {
   if (mqttConnected) {
     // Publish heart rate
     char heartRateMsg[10];
-    sprintf(heartRateMsg, "%d", heartRate);
+    sprintf(heartRateMsg, "%.1f", heartRate);
     client.publish(topic_heartrate, heartRateMsg);
     
     // Publish battery level
