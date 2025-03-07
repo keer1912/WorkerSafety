@@ -18,6 +18,7 @@ Optionally, bluetooth beacons can be implemented to find the location of the wor
 	    - To find RPI IP you can run `hostname -I` on the pi terminal or IP Scan.
         
     -   Configure MQTT username and password if applicable
+2. Download the library `MAX30100lib` by OXullo
 
 ## Set up MQTT Broker for Worker to Supervisor System on RPI
 ### Features
