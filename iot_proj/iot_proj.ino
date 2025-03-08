@@ -25,9 +25,8 @@ PubSubClient client(espClient);
 
 // Accelerometer settings
 float accX, accY, accZ;
-float accMagnitude;
+float accelMagnitude;
 //Not very accurate but might need you guys to help out with tweaking and researching more
-float prevMagnitude = 1.0;  // Start with gravity magnitude
 float fallThreshold = 0.5;   // Threshold for detecting free-fall
 float impactThreshold = 2.0; // Threshold for detecting impact
 float stableThreshold = 1.0; // [ADDED] Threshold for stable position (upright)
@@ -39,6 +38,7 @@ UserState userState = STANDING;
 bool possibleFall = false;
 unsigned long fallDetectionTime = 0;
 const int debounceTime = 2000;  // Prevent multiple detections
+const int stabilityCheckTime = 3000; // [ADDED] Time to check stability after a fall
 
 // Simulated heart rate and battery level
 int heartRate = 75;
@@ -52,6 +52,12 @@ unsigned long lastReconnectAttempt = 0;
 bool wifiConnected = false;
 bool mqttConnected = false;
 
+// Moving average for acceleration
+const int movingAverageWindow = 10; // [ADDED] Number of samples for moving average
+float accelMagnitudeHistory[movingAverageWindow]; // [ADDED]
+int accelMagnitudeIndex = 0; // [ADDED]
+float accelMagnitudeAverage = 0; // [ADDED]
+
 void setup() {
   M5.begin();
   M5.IMU.Init();
@@ -63,6 +69,7 @@ void setup() {
   sprintf(topic_fall, "/%s/%s/falldetect", floorID, workerID);
   sprintf(topic_heartrate, "/%s/%s/heartrate", floorID, workerID);
   sprintf(topic_battery, "/%s/%s/battery", floorID, workerID);
+  sprintf(topic_recovery, "/%s/%s/recovery", floorID, workerID); // [ADDED]
 
   // Connect to WiFi
   connectWiFi();
@@ -78,6 +85,11 @@ void setup() {
   M5.Lcd.println(topic_battery);
   M5.Lcd.println(topic_recovery); // [ADDED]
   delay(3000);
+
+  // Initialize moving average array [ADDED]
+  for (int i = 0; i < movingAverageWindow; i++) {
+    accelMagnitudeHistory[i] = 1.0; // Start with gravity magnitude
+  }
 }
 
 void connectWiFi() {
@@ -134,7 +146,16 @@ void loop() {
   M5.IMU.getAccelData(&accX, &accY, &accZ);
   
   // Calculate acceleration magnitude 
-  accMagnitude = sqrt(accX*accX + accY*accY + accZ*accZ);
+  accelMagnitude = sqrt(accX*accX + accY*accY + accZ*accZ);
+
+  // Update moving average [ADDED]
+  accelMagnitudeHistory[accelMagnitudeIndex] = accelMagnitude;
+  accelMagnitudeIndex = (accelMagnitudeIndex + 1) % movingAverageWindow;
+  accelMagnitudeAverage = 0;
+  for (int i = 0; i < movingAverageWindow; i++) {
+    accelMagnitudeAverage += accelMagnitudeHistory[i];
+  }
+  accelMagnitudeAverage /= movingAverageWindow;
 
   // Fall detection algorithm: Look for free-fall followed by impact
   fall_detection();
@@ -161,7 +182,7 @@ void updateDisplay() {
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.println("Fall Detector");
     
-    M5.Lcd.printf("Acc: %.2f\n", accMagnitude);
+    M5.Lcd.printf("Accel: %.2f\n", accelMagnitude);
     M5.Lcd.printf("HR: %d BPM\n", heartRate);
     M5.Lcd.printf("Batt: %d%%\n", batteryLevel);
     
@@ -169,6 +190,20 @@ void updateDisplay() {
     M5.Lcd.setCursor(0, 100);
     M5.Lcd.printf("WiFi: %s\n", wifiConnected ? "OK" : "NO");
     M5.Lcd.printf("MQTT: %s\n", mqttConnected ? "OK" : "NO");
+  }
+
+  // Display user state
+  M5.Lcd.setCursor(0, 120);
+  switch (userState) {
+    case STANDING:
+      M5.Lcd.println("State: STANDING");
+      break;
+    case FALLEN:
+      M5.Lcd.println("State: FALLEN");
+      break;
+    case STANDING_UP:
+      M5.Lcd.println("State: STANDING UP");
+      break;
   }
 }
 
@@ -207,41 +242,76 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 void fall_detection() {
-  if (!possibleFall && accMagnitude < fallThreshold) {
-    // Possible free-fall detected
-    possibleFall = true;
-    fallDetectionTime = millis();
-  } else if (possibleFall && (millis() - fallDetectionTime < 500)) {
-    // Within 500ms of detecting possible free-fall, look for impact
-    if (accMagnitude > impactThreshold) {
-      // Impact detected after free-fall - FALL DETECTED
-      M5.Lcd.fillScreen(RED);
-      M5.Lcd.setCursor(0, 0);
-      M5.Lcd.println("FALL DETECTED!");
-      M5.Lcd.println("Sending alert...");
-      
-      // Trigger beep
-      M5.Beep.beep();  // Start beeping
-      delay(1000);     // Beep for 1 second
-      M5.Beep.mute();  // Stop beeping
+  switch (userState) {
+    case STANDING:
+      if (accelMagnitude < fallThreshold) {
+        // Possible free-fall detected
+        possibleFall = true;
+        fallDetectionTime = millis();
+      } else if (possibleFall && (millis() - fallDetectionTime < 500)) {
+        // Within 500ms of detecting possible free-fall, look for impact
+        if (accelMagnitude > impactThreshold) {
+          // Impact detected after free-fall - FALL DETECTED
+          userState = FALLEN;
+          M5.Lcd.fillScreen(RED);
+          M5.Lcd.setCursor(0, 0);
+          M5.Lcd.println("FALL DETECTED!");
+          M5.Lcd.println("Sending alert...");
+          
+          // Trigger beep
+          M5.Beep.beep();  // Start beeping
+          delay(1000);     // Beep for 1 second
+          M5.Beep.mute();  // Stop beeping
 
-      // Publish fall detection data if connected
-      // When detecting a fall
-      if (mqttConnected) {
-        M5.Lcd.println("Publishing alert...");
-        bool success = client.publish(topic_fall, "Fall Detected!");
-        if (success) {
-          M5.Lcd.println("Alert published!");
-        } else {
-          M5.Lcd.println("Publish failed!");
+          // Publish fall detection data if connected
+          if (mqttConnected) {
+            M5.Lcd.println("Publishing alert...");
+            bool success = client.publish(topic_fall, "Fall Detected!");
+            if (success) {
+              M5.Lcd.println("Alert published!");
+            } else {
+              M5.Lcd.println("Publish failed!");
+            }
+          }
+          
+          possibleFall = false;
+          delay(debounceTime);  // Prevent multiple triggers
+        }
+      } else if (possibleFall && (millis() - fallDetectionTime >= 500)) {
+        // Reset if no impact detected within timeframe
+        possibleFall = false;
+      }
+      break;
+
+    case FALLEN:
+      // Check if the user has returned to a stable position
+      if (accelMagnitude >= stableThreshold) {
+        userState = STANDING_UP;
+        M5.Lcd.fillScreen(GREEN);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.println("STANDING UP!");
+        
+        // Publish recovery data if connected
+        if (mqttConnected) {
+          M5.Lcd.println("Publishing recovery...");
+          bool success = client.publish(topic_recovery, "User has stood up!");
+          if (success) {
+            M5.Lcd.println("Recovery published!");
+          } else {
+            M5.Lcd.println("Publish failed!");
+          }
         }
       }
-      
-      possibleFall = false;
-      delay(debounceTime);  // Prevent multiple triggers
-    }
-  } else if (possibleFall && (millis() - fallDetectionTime >= 500)) {
-    // Reset if no impact detected within timeframe
-    possibleFall = false;
+      break;
+
+    case STANDING_UP:
+      // Check if the user is fully standing
+      if (accelMagnitude >= stableThreshold) {
+        userState = STANDING;
+        M5.Lcd.fillScreen(BLUE);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.println("STANDING!");
+      }
+      break;
   }
 }
