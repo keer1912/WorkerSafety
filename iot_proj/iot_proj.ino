@@ -205,9 +205,22 @@ void updateSensors() {
   // Simulate heart rate (more realistic pattern)
   heartRate = random(65, 85);  // Simulate heart rate between 65-85 bpm
   
-  // Simulate battery drain
-  batteryLevel -= random(0, 2);
-  if (batteryLevel < 0) batteryLevel = 100;
+  // Read actual battery level instead of simulating
+  batteryLevel = getBatteryPercentage();
+}
+
+int getBatteryPercentage() {
+  float batVoltage = M5.Axp.GetVbatData() * 1.1 / 1000;
+  
+  // Convert voltage to percentage
+  // The voltage range is approximately 3.0V (empty) to 4.2V (full)
+  int percentage = (batVoltage - 3.0) / (4.2 - 3.0) * 100;
+  
+  // Ensure percentage is within 0-100 range
+  if (percentage > 100) percentage = 100;
+  if (percentage < 0) percentage = 0;
+  
+  return percentage;
 }
 
 void publishData() {
