@@ -28,7 +28,7 @@ float accX, accY, accZ;
 float accelMagnitude;
 //Not very accurate but might need you guys to help out with tweaking and researching more
 //float fallThreshold = 0.5;   // Threshold for detecting free-fall
-float impactThreshold = 2.0; // Threshold for detecting impact
+float impactThreshold = 3.0; // Threshold for detecting impact
 //float stableThreshold = 1.0; // Threshold for stable position (upright)
 
 // State machine
