@@ -16,7 +16,7 @@ const int mqtt_port = 1883;
 const char* mqtt_user = "raspberry-pi-login-username"; // Your raspberry pi username
 const char* mqtt_password = "12345678"; // Your raspberry pi login password if have   
 
-// Worker and floor information
+// Worker and floor information. Change workerId and floorId per device
 const char* workerID = "worker1";
 const char* floorID = "floor1";
 
@@ -24,6 +24,7 @@ const char* floorID = "floor1";
 char topic_fall[50];
 char topic_heartrate[50];
 char topic_battery[50];
+char clientId[50];
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -71,6 +72,9 @@ void setup() {
   sprintf(topic_fall, "/%s/%s/falldetect", floorID, workerID);
   sprintf(topic_heartrate, "/%s/%s/heartrate", floorID, workerID);
   sprintf(topic_battery, "/%s/%s/battery", floorID, workerID);
+
+  // Generate client Id to differentiate all devices 
+  sprintf(clientId, "client_%s_%s", floorID, workerID);
 
   // Connect to WiFi
   connectWiFi();
@@ -252,7 +256,7 @@ void publishData() {
 }
 
 void reconnect() {
-  if (client.connect("M5StickC_Fall_Detector", mqtt_user, mqtt_password)) {
+  if (client.connect(clientId, mqtt_user, mqtt_password)) {
     mqttConnected = true;
     // Resubscribe if needed
     client.subscribe(topic_fall);
