@@ -1,20 +1,33 @@
-
-// BIDIRECTIONAL ESP-NOW COMMUNICATION - DEVICE A
-// File name: M5StickC_ESP_NOW_DeviceA.ino
+// BIDIRECTIONAL ESP-NOW COMMUNICATION WITH KEY ROTATION - DEVICE A
 
 #include <M5StickCPlus.h>
 #include <esp_now.h>
 #include <WiFi.h>
+#include <Preferences.h>  // For storing keys in non-volatile memory
 
 // REPLACE WITH THE MAC Address of your second device (Device 😎
-uint8_t peerMacAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // Replace with actual MAC
+uint8_t peerMacAddress[] = {0x4C, 0x75, 0x25, 0xCB, 0x90, 0x88};  // Replace with actual MAC
 
-// Define a data structure
+// Create a preferences object for storing encryption keys
+Preferences preferences;
+
+// Define a structure for key management
+typedef struct {
+  uint8_t currentKey[16];
+  uint32_t keyRotationTime;  // Unix timestamp for next rotation
+  uint16_t keyIndex;         // Current key index/version
+} KeyManager;
+
+KeyManager keyMgr;
+
+// Define a data structure for communication
 typedef struct message_struct {
-  uint8_t messageType;  // 0 = regular update, 1 = button press notification, 2 = response
+  uint8_t messageType;  // 0 = regular update, 1 = button press notification, 2 = response, 3 = key update notification
   char message[32];
   int counter;
   float value;
+  // Add key information for key update messages
+  uint16_t keyIndex;
 } message_struct;
 
 // Create structured objects
@@ -28,6 +41,94 @@ bool shouldSendUpdate = false;
 
 // Peer info
 esp_now_peer_info_t peerInfo;
+
+// Basic key generation function (in real application, use better randomization)
+void generateNewKey(uint8_t* keyBuffer) {
+  // Generate a random key
+  for (int i = 0; i < 16; i++) {
+    keyBuffer[i] = random(0, 256);  // Random byte between 0-255
+  }
+}
+
+// Initialize the key manager
+void initializeKeyManager() {
+  preferences.begin("esp-now-keys", false);  // Open in RW mode
+  
+  // Check if we have a stored key
+  keyMgr.keyIndex = preferences.getUShort("keyIndex", 0);
+  keyMgr.keyRotationTime = preferences.getULong("nextRotation", 0);
+  
+  if (keyMgr.keyIndex == 0 || keyMgr.keyRotationTime == 0 || millis() > keyMgr.keyRotationTime) {
+    // First time or time to rotate keys
+    keyMgr.keyIndex++;
+    
+    // Generate a new key
+    generateNewKey(keyMgr.currentKey);
+    
+    // Save the new key
+    preferences.putBytes("currentKey", keyMgr.currentKey, 16);
+    preferences.putUShort("keyIndex", keyMgr.keyIndex);
+    
+    // Set next rotation time (e.g., 7 days from now)
+    // In a real application, you would use proper time libraries and NTP
+    keyMgr.keyRotationTime = millis() + (7 * 24 * 60 * 60 * 1000); // 7 days in ms
+    preferences.putULong("nextRotation", keyMgr.keyRotationTime);
+  } else {
+    // Load the existing key
+    preferences.getBytes("currentKey", keyMgr.currentKey, 16);
+  }
+
+  // Debug info
+  M5.Lcd.printf("Key Index: %d\n", keyMgr.keyIndex);
+}
+
+// Apply the current key to ESP-NOW
+void applyCurrentKey() {
+  esp_err_t result = esp_now_set_pmk(keyMgr.currentKey);
+  if (result != ESP_OK) {
+    M5.Lcd.println("Failed to set encryption key");
+  } else {
+    M5.Lcd.println("Encryption enabled");
+  }
+}
+
+// Check if it's time to rotate keys
+void checkKeyRotation() {
+  if (millis() > keyMgr.keyRotationTime) {
+    M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
+    M5.Lcd.setCursor(0, 40);
+    M5.Lcd.println("Rotating encryption keys...");
+    
+    // Generate a new key
+    keyMgr.keyIndex++;
+    generateNewKey(keyMgr.currentKey);
+    
+    // Save the new key
+    preferences.putBytes("currentKey", keyMgr.currentKey, 16);
+    preferences.putUShort("keyIndex", keyMgr.keyIndex);
+    
+    // Set next rotation time
+    keyMgr.keyRotationTime = millis() + (7 * 24 * 60 * 60 * 1000); // 7 days in ms
+    preferences.putULong("nextRotation", keyMgr.keyRotationTime);
+    
+    // Apply the new key
+    applyCurrentKey();
+    
+    // Notify peer about the new key
+    sendKeyUpdateNotification();
+  }
+}
+
+// Send a notification about a key update
+void sendKeyUpdateNotification() {
+  // Create a key update message
+  outgoingData.messageType = 3; // Key update notification
+  sprintf(outgoingData.message, "Key update");
+  outgoingData.keyIndex = keyMgr.keyIndex;
+  
+  // Send message via ESP-NOW
+  esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+}
 
 // Callback function called when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -50,7 +151,20 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   // Copy the data to our variable
   memcpy(&incomingData, data, sizeof(incomingData));
   
-  // Update the display with received data
+  // Check if this is a key update notification
+  if (incomingData.messageType == 3) {
+    // In a real implementation, you would have a secure way to share the new key
+    // For this example, just acknowledge that an update happened
+    M5.Lcd.fillRect(0, 80, 240, 40, BLACK); // Clear only receive area
+    M5.Lcd.setCursor(0, 80);
+    M5.Lcd.setTextColor(MAGENTA, BLACK);
+    M5.Lcd.println("RECEIVED KEY UPDATE:");
+    M5.Lcd.setTextColor(WHITE, BLACK);
+    M5.Lcd.printf("Peer updated to key index: %d\n", incomingData.keyIndex);
+    return;
+  }
+  
+  // Handle regular messages
   M5.Lcd.fillRect(0, 80, 240, 40, BLACK); // Clear only receive area
   M5.Lcd.setCursor(0, 80);
   M5.Lcd.setTextColor(YELLOW, BLACK);
@@ -86,17 +200,28 @@ void setup() {
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setCursor(0, 0);
-  M5.Lcd.println("DEVICE A");
+  M5.Lcd.println("M5StickC Plus ESP-NOW");
+  M5.Lcd.println("DEVICE A (Bidirectional)");
+  
+  // Initialize random number generator
+  randomSeed(analogRead(0));
   
   // Display MAC Address
   WiFi.mode(WIFI_STA);
   M5.Lcd.println("MAC: " + WiFi.macAddress());
+  M5.Lcd.println("Use this MAC for Device B!");
+  
+  // Initialize the key manager
+  initializeKeyManager();
   
   // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
     M5.Lcd.println("Error initializing ESP-NOW");
     return;
   }
+  
+  // Apply the current encryption key
+  applyCurrentKey();
   
   // Register callbacks
   esp_now_register_send_cb(OnDataSent);
@@ -105,7 +230,7 @@ void setup() {
   // Register peer
   memcpy(peerInfo.peer_addr, peerMacAddress, 6);
   peerInfo.channel = 0;  
-  peerInfo.encrypt = false;
+  peerInfo.encrypt = true;  // Enable encryption for this peer
   
   // Add peer        
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
@@ -118,6 +243,7 @@ void setup() {
   strcpy(outgoingData.message, "Hello from Device A");
   outgoingData.counter = 0;
   outgoingData.value = 22.5;
+  outgoingData.keyIndex = keyMgr.keyIndex;
   
   // Show instructions
   M5.Lcd.setCursor(0, 130);
@@ -127,6 +253,9 @@ void setup() {
 
 void loop() {
   M5.update(); // Update button state
+  
+  // Check if it's time to rotate keys
+  checkKeyRotation();
   
   // Check if it's time for a periodic update (every 5 seconds)
   if (millis() - lastSentTime > 5000) {
@@ -140,6 +269,7 @@ void loop() {
     outgoingData.counter++;
     outgoingData.value = 22.5 + (float)(outgoingData.counter % 10);
     sprintf(outgoingData.message, "Update from A: %d", outgoingData.counter);
+    outgoingData.keyIndex = keyMgr.keyIndex;
     
     // Display data being sent
     M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
@@ -161,6 +291,7 @@ void loop() {
     // Send button press notification
     outgoingData.messageType = 1;
     sprintf(outgoingData.message, "Button B pressed!");
+    outgoingData.keyIndex = keyMgr.keyIndex;
     
     // Display data being sent
     M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
