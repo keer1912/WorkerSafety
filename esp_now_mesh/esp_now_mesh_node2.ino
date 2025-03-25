@@ -11,12 +11,13 @@
 
 // Node configuration
 #define NODE_ID 2  // IMPORTANT: Each node must have a unique ID (1, 2, 3, etc.)
-const char* NODE_NAME = "Node2"; // Human-readable name
+const char* NODE_NAME = "SecNode2"; // Human-readable name
 
 // Mesh network configuration
 #define MAX_HOP_COUNT 5    // Maximum number of hops a message can travel
 #define DISCOVERY_INTERVAL 30000  // Time between mesh discovery broadcasts (ms)
 #define ROUTE_EXPIRY_TIME 300000  // Time before routes expire (ms)
+#define KEY_ROTATION_TIME 604800000 // 7 days in milliseconds
 
 // Message types
 #define MSG_TYPE_DATA 0          // Regular data message
@@ -24,6 +25,19 @@ const char* NODE_NAME = "Node2"; // Human-readable name
 #define MSG_TYPE_ROUTE_REQUEST 2 // Request for a route to a destination
 #define MSG_TYPE_ROUTE_REPLY 3   // Reply with route information
 #define MSG_TYPE_HEARTBEAT 4     // Periodic heartbeat to keep routes alive
+#define MSG_TYPE_KEY_UPDATE 5    // Key update notification
+
+// Create a preferences object for storing encryption keys
+Preferences preferences;
+
+// Define a structure for key management
+typedef struct {
+  uint8_t currentKey[16];
+  uint32_t keyRotationTime;  // millis() timestamp for next rotation
+  uint16_t keyIndex;         // Current key index/version
+} KeyManager;
+
+KeyManager keyMgr;
 
 // Routing table entry
 typedef struct {
@@ -42,6 +56,7 @@ typedef struct {
   uint8_t origSrcId;       // Original source ID (for forwarded messages)
   uint8_t hopCount;        // Current hop count
   uint16_t messageId;      // Unique message ID to prevent loops
+  uint16_t keyIndex;       // Encryption key index being used
   char payload[64];        // Message payload
   float value;             // Numeric value (for sensor data, etc.)
 } MeshMessage;
@@ -52,6 +67,8 @@ typedef struct {
   uint8_t nodeId;          // Node ID if known, 0 if unknown
   uint32_t lastSeen;       // Last time we received a message from this peer
   bool isDirect;           // Is this a direct (one-hop) peer
+  bool isEncrypted;        // Is communication with this peer encrypted
+  uint16_t keyIndex;       // Last known key index for this peer
 } MeshPeer;
 
 // Global variables
@@ -62,6 +79,7 @@ RouteEntry routingTable[MAX_MESH_PEERS];
 uint16_t nextMessageId = 1;
 unsigned long lastDiscoveryTime = 0;
 unsigned long lastHeartbeatTime = 0;
+unsigned long lastKeyCheckTime = 0;
 
 // Message history to prevent loops
 #define MAX_MESSAGE_HISTORY 20
@@ -71,6 +89,130 @@ struct {
   uint32_t timestamp;
 } messageHistory[MAX_MESSAGE_HISTORY];
 uint8_t historyIndex = 0;
+
+// Basic key generation function (in real application, use better randomization)
+void generateNewKey(uint8_t* keyBuffer) {
+  // Generate a random key
+  for (int i = 0; i < 16; i++) {
+    keyBuffer[i] = random(0, 256);  // Random byte between 0-255
+  }
+}
+
+// Initialize the key manager
+void initializeKeyManager() {
+  preferences.begin("esp-mesh-keys", false);  // Open in RW mode
+  
+  // Check if we have a stored key
+  keyMgr.keyIndex = preferences.getUShort("keyIndex", 0);
+  keyMgr.keyRotationTime = preferences.getULong("nextRotation", 0);
+  
+  if (keyMgr.keyIndex == 0 || keyMgr.keyRotationTime == 0 || millis() > keyMgr.keyRotationTime) {
+    // First time or time to rotate keys
+    keyMgr.keyIndex++;
+    
+    // Generate a new key
+    generateNewKey(keyMgr.currentKey);
+    
+    // Save the new key
+    preferences.putBytes("currentKey", keyMgr.currentKey, 16);
+    preferences.putUShort("keyIndex", keyMgr.keyIndex);
+    
+    // Set next rotation time (e.g., 7 days from now)
+    keyMgr.keyRotationTime = millis() + KEY_ROTATION_TIME;
+    preferences.putULong("nextRotation", keyMgr.keyRotationTime);
+  } else {
+    // Load the existing key
+    preferences.getBytes("currentKey", keyMgr.currentKey, 16);
+  }
+
+  // Debug info
+  M5.Lcd.printf("Key Index: %d\n", keyMgr.keyIndex);
+}
+
+// Apply the current key to ESP-NOW
+void applyCurrentKey() {
+  esp_err_t result = esp_now_set_pmk(keyMgr.currentKey);
+  if (result != ESP_OK) {
+    M5.Lcd.println("Failed to set encryption key");
+  } else {
+    M5.Lcd.println("Encryption enabled");
+  }
+}
+
+// Check if it's time to rotate keys
+void checkKeyRotation() {
+  if (millis() - lastKeyCheckTime < 60000) {
+    // Only check once per minute to avoid excessive overhead
+    return;
+  }
+  lastKeyCheckTime = millis();
+  
+  if (millis() > keyMgr.keyRotationTime) {
+    M5.Lcd.fillRect(0, 40, 240, 20, BLACK);
+    M5.Lcd.setCursor(0, 40);
+    M5.Lcd.println("Rotating encryption keys...");
+    
+    // Generate a new key
+    keyMgr.keyIndex++;
+    generateNewKey(keyMgr.currentKey);
+    
+    // Save the new key
+    preferences.putBytes("currentKey", keyMgr.currentKey, 16);
+    preferences.putUShort("keyIndex", keyMgr.keyIndex);
+    
+    // Set next rotation time
+    keyMgr.keyRotationTime = millis() + KEY_ROTATION_TIME;
+    preferences.putULong("nextRotation", keyMgr.keyRotationTime);
+    
+    // Apply the new key
+    applyCurrentKey();
+    
+    // Notify the mesh about the key update
+    sendKeyUpdateNotification();
+  }
+}
+
+// Send a notification about a key update
+void sendKeyUpdateNotification() {
+  // Send a key update broadcast to all peers
+  outgoingMsg.messageType = MSG_TYPE_KEY_UPDATE;
+  outgoingMsg.srcId = NODE_ID;
+  outgoingMsg.destId = 0; // Broadcast
+  outgoingMsg.origSrcId = NODE_ID;
+  outgoingMsg.hopCount = 0;
+  outgoingMsg.messageId = nextMessageId++;
+  outgoingMsg.keyIndex = keyMgr.keyIndex;
+  strcpy(outgoingMsg.payload, "Key update");
+  
+  // Broadcast to all direct peers
+  for (int i = 0; i < MAX_MESH_PEERS; i++) {
+    if (knownPeers[i].lastSeen > 0 && knownPeers[i].isDirect) {
+      esp_now_send(knownPeers[i].mac, (uint8_t*)&outgoingMsg, sizeof(outgoingMsg));
+    }
+  }
+}
+
+// Handle a key update notification
+void handleKeyUpdateNotification(const uint8_t *mac_addr) {
+  // Update the peer's key index
+  for (int i = 0; i < MAX_MESH_PEERS; i++) {
+    if (knownPeers[i].lastSeen > 0 && memcmp(knownPeers[i].mac, mac_addr, 6) == 0) {
+      knownPeers[i].keyIndex = incomingMsg.keyIndex;
+      break;
+    }
+  }
+  
+  // Display the key update
+  M5.Lcd.fillRect(0, 60, 240, 40, BLACK);
+  M5.Lcd.setCursor(0, 60);
+  M5.Lcd.setTextColor(MAGENTA, BLACK);
+  M5.Lcd.println("RECEIVED KEY UPDATE:");
+  M5.Lcd.setTextColor(WHITE, BLACK);
+  M5.Lcd.printf("Node %d updated to key: %d\n", incomingMsg.srcId, incomingMsg.keyIndex);
+  
+  // Forward the key update to other nodes
+  forwardMessage(&incomingMsg);
+}
 
 // Callback function when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -90,7 +232,7 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   memcpy(&incomingMsg, data, sizeof(incomingMsg));
   
   // Update the peer record
-  updatePeerInfo(mac_addr, incomingMsg.srcId);
+  updatePeerInfo(mac_addr, incomingMsg.srcId, incomingMsg.keyIndex);
   
   // Check if we've seen this message before (to prevent loops)
   if (isMessageInHistory(incomingMsg.origSrcId, incomingMsg.messageId)) {
@@ -122,6 +264,10 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     case MSG_TYPE_HEARTBEAT:
       handleHeartbeat(mac_addr);
       break;
+      
+    case MSG_TYPE_KEY_UPDATE:
+      handleKeyUpdateNotification(mac_addr);
+      break;
   }
 }
 
@@ -133,6 +279,12 @@ void initESPNOW() {
     M5.Lcd.println("Error initializing ESP-NOW");
     return;
   }
+  
+  // Initialize the key manager
+  initializeKeyManager();
+  
+  // Apply the current encryption key
+  applyCurrentKey();
   
   // Register callbacks
   esp_now_register_send_cb(OnDataSent);
@@ -161,7 +313,7 @@ void initMesh() {
 }
 
 // Update info about a peer based on received message
-void updatePeerInfo(const uint8_t *mac, uint8_t nodeId) {
+void updatePeerInfo(const uint8_t *mac, uint8_t nodeId, uint16_t keyIndex = 0) {
   int emptySlot = -1;
   
   // Look for existing peer or empty slot
@@ -171,6 +323,9 @@ void updatePeerInfo(const uint8_t *mac, uint8_t nodeId) {
       knownPeers[i].lastSeen = millis();
       if (nodeId > 0) {
         knownPeers[i].nodeId = nodeId;
+      }
+      if (keyIndex > 0) {
+        knownPeers[i].keyIndex = keyIndex;
       }
       knownPeers[i].isDirect = true;
       return;
@@ -187,13 +342,20 @@ void updatePeerInfo(const uint8_t *mac, uint8_t nodeId) {
     knownPeers[emptySlot].nodeId = nodeId;
     knownPeers[emptySlot].lastSeen = millis();
     knownPeers[emptySlot].isDirect = true;
+    knownPeers[emptySlot].keyIndex = keyIndex;
+    knownPeers[emptySlot].isEncrypted = true; // Assume encryption for new peers
     
     // Register this peer with ESP-NOW
     esp_now_peer_info_t peerInfo;
     memcpy(peerInfo.peer_addr, mac, 6);
     peerInfo.channel = 0;  
-    peerInfo.encrypt = false;
-    esp_now_add_peer(&peerInfo);
+    peerInfo.encrypt = true;  // Enable encryption for this peer
+    
+    // Add peer        
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+      M5.Lcd.println("Failed to add peer");
+      knownPeers[emptySlot].isEncrypted = false;
+    }
   }
 }
 
@@ -206,6 +368,7 @@ bool sendMeshMessage(uint8_t destId, uint8_t msgType, const char* payload, float
   outgoingMsg.origSrcId = NODE_ID;
   outgoingMsg.hopCount = 0;
   outgoingMsg.messageId = nextMessageId++;
+  outgoingMsg.keyIndex = keyMgr.keyIndex;
   outgoingMsg.value = value;
   
   if (payload != NULL) {
@@ -466,8 +629,11 @@ void setup() {
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setCursor(0, 0);
-  M5.Lcd.println("ESP-NOW MESH NETWORK");
+  M5.Lcd.println("SECURE ESP-NOW MESH");
   M5.Lcd.printf("NODE ID: %d (%s)\n", NODE_ID, NODE_NAME);
+  
+  // Initialize random number generator
+  randomSeed(analogRead(0));
   
   // Initialize ESP-NOW
   initESPNOW();
@@ -486,6 +652,9 @@ void setup() {
 
 void loop() {
   M5.update(); // Update button state
+  
+  // Check if it's time to rotate keys
+  checkKeyRotation();
   
   // Periodic discovery broadcast
   if (millis() - lastDiscoveryTime > DISCOVERY_INTERVAL) {
@@ -509,7 +678,7 @@ void loop() {
     // In a real application, you might want to cycle through destination nodes
     uint8_t destNode = 1;  // Change this as needed for Node 2, we'll send to Node 1
     char message[64];
-    sprintf(message, "Hello from %s", NODE_NAME);
+    sprintf(message, "Secure msg from %s", NODE_NAME);
     
     M5.Lcd.fillRect(0, 40, 240, 20, BLACK);
     M5.Lcd.setCursor(0, 40);
