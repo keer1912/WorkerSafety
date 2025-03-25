@@ -95,6 +95,20 @@ unsigned long lastDiscoveryTime = 0;
 unsigned long lastHeartbeatTime = 0;
 unsigned long lastKeyCheckTime = 0;
 
+// Forward declarations of functions
+void updatePeerInfo(const uint8_t *mac, uint8_t nodeId, uint16_t keyIndex = 0);
+void forwardMessage(const MeshMessage* msg);
+void handleDiscoveryMessage(const uint8_t *mac_addr);
+void handleRouteRequest(const uint8_t *mac_addr);
+void handleRouteReply();
+void handleDataMessage(const uint8_t *mac_addr);
+void handleHeartbeat(const uint8_t *mac_addr);
+void handleKeyUpdateNotification(const uint8_t *mac_addr);
+void updateRoute(uint8_t destId, const uint8_t *nextHopMac, uint8_t hopCount);
+void sendRouteReply(const uint8_t *replyMac, uint8_t destId);
+void addMessageToHistory(uint8_t srcId, uint16_t msgId);
+bool isMessageInHistory(uint8_t srcId, uint16_t msgId);
+
 // Message history to prevent loops
 #define MAX_MESSAGE_HISTORY 20
 struct {
