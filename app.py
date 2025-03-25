@@ -1,8 +1,11 @@
 from flask import Flask, render_template, jsonify
 import paho.mqtt.client as mqtt
 import threading
+import serial
+import time
 
 app = Flask(__name__)
+ser = None
 
 data_store = {
     # Floor ID → Worker ID → Sensor type → Value
@@ -35,15 +38,26 @@ def on_connect(client, userdata, flags, rc):
 
 # Callback when a message is received
 def on_message(client, userdata, msg):
-    print(f"RECEIVED: {msg.topic} = {msg.payload.decode()}")
-    
-    # Extract floor and worker ID from the topic
+    global ser
     topic_parts = msg.topic.split("/")
-    if len(topic_parts) >= 4:  # Make sure we have enough parts
-        floor_id = topic_parts[1]
-        worker_id = topic_parts[2]
+    
+    try:
+        message = msg.payload.decode('utf-8')
+        topic = msg.topic  # e.g., "/floor1/worker23/heartrate/75"
+
+        payload = topic + "/" + message
+        print("Payload: " + payload)
+        
+        if ser is not None:
+            ser.write((payload + "\n").encode())  # Send raw topic + newline
+            print(f"Sent to serial: {payload}")
+    except Exception as e:
+        print(f"Error: {e}")
+    
+    if len(topic_parts) >= 4:
+        floor_id = topic_parts[1]  # Correct extraction from topic
+        worker_id = topic_parts[2]  # Correct extraction from topic
         sensor_type = topic_parts[3]
-        value = msg.payload.decode()
         
         # Initialize nested dictionaries if they don't exist
         if floor_id not in data_store:
@@ -52,7 +66,7 @@ def on_message(client, userdata, msg):
             data_store[floor_id][worker_id] = {}
             
         # Store the data
-        data_store[floor_id][worker_id][sensor_type] = value
+        data_store[floor_id][worker_id][sensor_type] = message
 
         # Process the message based on the sensor type
         if sensor_type == "falldetect":
@@ -76,11 +90,11 @@ client.on_connect = on_connect
 client.on_message = on_message
 
 # Set authentication credentials
-client.username_pw_set("username", "passwd")
+# client.username_pw_set("username", "passwd")
 
 print("Connecting to MQTT broker...")
 # Connect to the broker
-client.connect("localhost", 1883, 60)
+client.connect("192.168.224.201", 1883, 60)
 
 # Start the MQTT client loop in a background thread
 mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
@@ -96,4 +110,11 @@ def get_data():
     return jsonify(data_store)
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    try:
+        ser = serial.Serial('COM3', 9600, timeout=1)
+        print("Serial port opened successfully")    
+    except Exception as e:
+        print(f"Failed to open serial port: {e}")
+        ser = None
+        
+    app.run(host="0.0.0.0", debug=False)

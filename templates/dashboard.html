@@ -150,7 +150,7 @@
                 workerCard.find(".battery").text(worker.battery || "N/A");
 
                 // Update fall status
-                const isFallen = worker.falldetect === "Fall Detected!";
+                const isFallen = worker.falldetect === "Fallen";
                 const statusSpan = workerCard.find(".status");
 
                 if (isFallen) {
