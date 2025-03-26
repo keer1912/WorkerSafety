@@ -1,4 +1,4 @@
-// BIDIRECTIONAL ESP-NOW COMMUNICATION WITH KEY ROTATION - DEVICE A
+// BIDIRECTIONAL ESP-NOW COMMUNICATION WITH FALL DETECTION - DEVICE A
 
 #include <M5StickCPlus.h>
 #include <esp_now.h>
@@ -22,7 +22,7 @@ KeyManager keyMgr;
 
 // Define a data structure for communication
 typedef struct message_struct {
-  uint8_t messageType;  // 0 = regular update, 1 = button press notification, 2 = response, 3 = key update notification
+  uint8_t messageType;  // 0 = regular update, 1 = button press notification, 2 = response, 3 = key update notification, 4 = fall emergency
   char message[32];
   int counter;
   float value;
@@ -41,6 +41,25 @@ bool shouldSendUpdate = false;
 
 // Peer info
 esp_now_peer_info_t peerInfo;
+
+// Accelerometer data for fall detection
+float accX, accY, accZ;
+float accelMagnitude;
+float impactThreshold = 3.0; // Threshold for detecting a fall
+
+// State machine for fall detection
+enum UserState {STANDING, FALLEN};
+UserState userState = STANDING;
+
+bool possibleFall = false;
+unsigned long fallDetectionTime = 0;
+const int debounceTime = 2000;  // Prevent multiple detections
+
+// Moving average for acceleration smoothing
+const int movingAverageWindow = 10;
+float accelMagnitudeHistory[movingAverageWindow];
+int accelMagnitudeIndex = 0;
+float accelMagnitudeAverage = 0;
 
 // Basic key generation function (in real application, use better randomization)
 void generateNewKey(uint8_t* keyBuffer) {
@@ -130,6 +149,26 @@ void sendKeyUpdateNotification() {
   esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
 }
 
+// Send emergency fall detection notification
+void sendFallEmergency() {
+  // Create an emergency message
+  outgoingData.messageType = 4; // Fall emergency notification
+  sprintf(outgoingData.message, "EMERGENCY: WORKER FALLEN!");
+  outgoingData.value = accelMagnitude; // Send impact force
+  outgoingData.keyIndex = keyMgr.keyIndex;
+  
+  // Display emergency message
+  M5.Lcd.fillRect(0, 40, 240, 40, BLACK);
+  M5.Lcd.setCursor(0, 40);
+  M5.Lcd.setTextColor(RED, BLACK);
+  M5.Lcd.println("SENDING EMERGENCY ALERT:");
+  M5.Lcd.setTextColor(WHITE, BLACK);
+  M5.Lcd.println("Fall detected, help needed!");
+  
+  // Send emergency message via ESP-NOW
+  esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+}
+
 // Callback function called when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   M5.Lcd.setCursor(0, 120);
@@ -164,6 +203,34 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     return;
   }
   
+  // Check if this is an emergency fall notification
+  if (incomingData.messageType == 4) {
+    // Display emergency alert
+    M5.Lcd.fillScreen(RED);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.setTextColor(WHITE, RED);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.println("!! EMERGENCY !!");
+    M5.Lcd.println(incomingData.message);
+    M5.Lcd.println("WORKER B HAS FALLEN");
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.printf("Impact force: %.2f\n", incomingData.value);
+    
+    // Play alarm sound
+    for (int i = 0; i < 5; i++) {
+      M5.Beep.beep();
+      delay(300);
+      M5.Beep.mute();
+      delay(100);
+    }
+    
+    // Send acknowledgment
+    outgoingData.messageType = 2;
+    sprintf(outgoingData.message, "Emergency received, help coming");
+    esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+    return;
+  }
+  
   // Handle regular messages
   M5.Lcd.fillRect(0, 80, 240, 40, BLACK); // Clear only receive area
   M5.Lcd.setCursor(0, 80);
@@ -193,15 +260,64 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   lastReceivedTime = millis();
 }
 
+// Fall detection function
+void detectFall() {
+  // Read accelerometer data
+  M5.IMU.getAccelData(&accX, &accY, &accZ);
+  accelMagnitude = sqrt(accX*accX + accY*accY + accZ*accZ);
+  
+  // Update moving average
+  accelMagnitudeHistory[accelMagnitudeIndex] = accelMagnitude;
+  accelMagnitudeIndex = (accelMagnitudeIndex + 1) % movingAverageWindow;
+  accelMagnitudeAverage = 0;
+  for (int i = 0; i < movingAverageWindow; i++) {
+    accelMagnitudeAverage += accelMagnitudeHistory[i];
+  }
+  accelMagnitudeAverage /= movingAverageWindow;
+  
+  // Fall detection logic
+  switch (userState) {
+    case STANDING:
+      if (accelMagnitude > impactThreshold) {
+        userState = FALLEN;
+        M5.Lcd.fillScreen(RED);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.println("FALL DETECTED!");
+        
+        M5.Beep.beep();  // Alert sound
+        delay(1000);
+        M5.Beep.mute();
+        
+        // Send emergency message to Device B
+        sendFallEmergency();
+        
+        delay(debounceTime);
+      }
+      break;
+
+    case FALLEN:
+      // Manual recovery button (press A to stand up)
+      if (M5.BtnA.wasPressed()) {
+        userState = STANDING;
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.println("RECOVERED!");
+        delay(1000);
+      }
+      break;
+  }
+}
+
 void setup() {
   // Initialize the M5StickC Plus
   M5.begin();
+  M5.IMU.Init();  // Initialize IMU for fall detection
   M5.Lcd.setRotation(3); // Landscape mode
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setCursor(0, 0);
   M5.Lcd.println("M5StickC Plus ESP-NOW");
-  M5.Lcd.println("DEVICE A (Bidirectional)");
+  M5.Lcd.println("DEVICE A with Fall Detection");
   
   // Initialize random number generator
   randomSeed(analogRead(0));
@@ -245,9 +361,14 @@ void setup() {
   outgoingData.value = 22.5;
   outgoingData.keyIndex = keyMgr.keyIndex;
   
+  // Initialize moving average for fall detection
+  for (int i = 0; i < movingAverageWindow; i++) {
+    accelMagnitudeHistory[i] = 1.0; // Start with gravity (1G)
+  }
+  
   // Show instructions
   M5.Lcd.setCursor(0, 130);
-  M5.Lcd.println("Btn A: Send update");
+  M5.Lcd.println("Btn A: Send update/Recover");
   M5.Lcd.println("Btn B: Notify button press");
 }
 
@@ -257,6 +378,9 @@ void loop() {
   // Check if it's time to rotate keys
   checkKeyRotation();
   
+  // Check for falls
+  detectFall();
+  
   // Check if it's time for a periodic update (every 5 seconds)
   if (millis() - lastSentTime > 5000) {
     shouldSendUpdate = true;
@@ -264,26 +388,29 @@ void loop() {
   
   // If button A is pressed or it's time for an update
   if (M5.BtnA.wasPressed() || shouldSendUpdate) {
-    // Send regular update
-    outgoingData.messageType = 0;
-    outgoingData.counter++;
-    outgoingData.value = 22.5 + (float)(outgoingData.counter % 10);
-    sprintf(outgoingData.message, "Update from A: %d", outgoingData.counter);
-    outgoingData.keyIndex = keyMgr.keyIndex;
-    
-    // Display data being sent
-    M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
-    M5.Lcd.setCursor(0, 40);
-    M5.Lcd.setTextColor(CYAN, BLACK);
-    M5.Lcd.println("SENDING TO DEVICE B:");
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.printf("Type: Update, Count: %d\n", outgoingData.counter);
-    
-    // Send message via ESP-NOW
-    esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
-    
-    lastSentTime = millis();
-    shouldSendUpdate = false;
+    // Only send if not in FALLEN state (to avoid conflict with recovery function)
+    if (userState != FALLEN || shouldSendUpdate) {
+      // Send regular update
+      outgoingData.messageType = 0;
+      outgoingData.counter++;
+      outgoingData.value = 22.5 + (float)(outgoingData.counter % 10);
+      sprintf(outgoingData.message, "Update from A: %d", outgoingData.counter);
+      outgoingData.keyIndex = keyMgr.keyIndex;
+      
+      // Display data being sent
+      M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
+      M5.Lcd.setCursor(0, 40);
+      M5.Lcd.setTextColor(CYAN, BLACK);
+      M5.Lcd.println("SENDING TO DEVICE B:");
+      M5.Lcd.setTextColor(WHITE, BLACK);
+      M5.Lcd.printf("Type: Update, Count: %d\n", outgoingData.counter);
+      
+      // Send message via ESP-NOW
+      esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+      
+      lastSentTime = millis();
+      shouldSendUpdate = false;
+    }
   }
   
   // If button B is pressed

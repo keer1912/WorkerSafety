@@ -1,4 +1,4 @@
-// BIDIRECTIONAL ESP-NOW COMMUNICATION WITH KEY ROTATION - DEVICE B
+// BIDIRECTIONAL ESP-NOW COMMUNICATION WITH FALL DETECTION - DEVICE B
 
 #include <M5StickCPlus.h>
 #include <esp_now.h>
@@ -22,7 +22,7 @@ KeyManager keyMgr;
 
 // Define the same data structure as in Device A
 typedef struct message_struct {
-  uint8_t messageType;  // 0 = regular update, 1 = button press notification, 2 = response, 3 = key update notification
+  uint8_t messageType;  // 0 = regular update, 1 = button press notification, 2 = response, 3 = key update notification, 4 = fall emergency
   char message[32];
   int counter;
   float value;
@@ -38,6 +38,11 @@ message_struct incomingData;
 unsigned long lastSentTime = 0;
 unsigned long lastReceivedTime = 0;
 bool shouldSendUpdate = false;
+
+// Emergency state tracking
+bool emergencyActive = false;
+unsigned long emergencyStartTime = 0;
+const unsigned long emergencyDisplayTime = 60000; // Show emergency for 1 minute
 
 // Peer info
 esp_now_peer_info_t peerInfo;
@@ -164,33 +169,89 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     return;
   }
   
-  // Handle regular messages
-  M5.Lcd.fillRect(0, 80, 240, 40, BLACK); // Clear only receive area
-  M5.Lcd.setCursor(0, 80);
-  M5.Lcd.setTextColor(YELLOW, BLACK);
-  M5.Lcd.println("RECEIVED FROM DEVICE A:");
-  M5.Lcd.setTextColor(WHITE, BLACK);
+  // Check if this is an emergency fall notification
+  if (incomingData.messageType == 4) {
+    // Display emergency alert
+    M5.Lcd.fillScreen(RED);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.setTextColor(WHITE, RED);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.println("!! EMERGENCY !!");
+    M5.Lcd.println(incomingData.message);
+    M5.Lcd.println("WORKER A HAS FALLEN");
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.printf("Impact force: %.2f\n", incomingData.value);
+    
+    // Play alarm sound
+    for (int i = 0; i < 5; i++) {
+      M5.Beep.beep();
+      delay(300);
+      M5.Beep.mute();
+      delay(100);
+    }
+    
+    // Set emergency state
+    emergencyActive = true;
+    emergencyStartTime = millis();
+    
+    // Send acknowledgment
+    outgoingData.messageType = 2;
+    sprintf(outgoingData.message, "Emergency received, help coming");
+    esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+    return;
+  }
   
-  // Display different info based on message type
-  switch(incomingData.messageType) {
-    case 0:
-      M5.Lcd.printf("Update: %s, Count: %d\n", incomingData.message, incomingData.counter);
-      break;
-    case 1:
-      M5.Lcd.printf("Button pressed on Device A\n");
-      M5.Lcd.printf("Counter: %d, Value: %.1f\n", incomingData.counter, incomingData.value);
-      
-      // Send response
-      outgoingData.messageType = 2;
-      sprintf(outgoingData.message, "Received your button press");
-      esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
-      break;
-    case 2:
-      M5.Lcd.printf("Response: %s\n", incomingData.message);
-      break;
+  // Only process regular messages if not in emergency state
+  if (!emergencyActive) {
+    // Handle regular messages
+    M5.Lcd.fillRect(0, 80, 240, 40, BLACK); // Clear only receive area
+    M5.Lcd.setCursor(0, 80);
+    M5.Lcd.setTextColor(YELLOW, BLACK);
+    M5.Lcd.println("RECEIVED FROM DEVICE A:");
+    M5.Lcd.setTextColor(WHITE, BLACK);
+    
+    // Display different info based on message type
+    switch(incomingData.messageType) {
+      case 0:
+        M5.Lcd.printf("Update: %s, Count: %d\n", incomingData.message, incomingData.counter);
+        break;
+      case 1:
+        M5.Lcd.printf("Button pressed on Device A\n");
+        M5.Lcd.printf("Counter: %d, Value: %.1f\n", incomingData.counter, incomingData.value);
+        
+        // Send response
+        outgoingData.messageType = 2;
+        sprintf(outgoingData.message, "Received your button press");
+        esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+        break;
+      case 2:
+        M5.Lcd.printf("Response: %s\n", incomingData.message);
+        break;
+    }
   }
   
   lastReceivedTime = millis();
+}
+
+// Check if emergency state needs to be cleared
+void checkEmergencyState() {
+  if (emergencyActive) {
+    // If Button A is pressed or emergency display time has elapsed
+    if (M5.BtnA.wasPressed() || (millis() - emergencyStartTime > emergencyDisplayTime)) {
+      emergencyActive = false;
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setTextSize(1);
+      M5.Lcd.setCursor(0, 0);
+      M5.Lcd.println("Emergency acknowledged");
+      M5.Lcd.println("Resuming normal operation");
+      delay(2000);
+      
+      // Send confirmation of assistance to Device A
+      outgoingData.messageType = 2;
+      sprintf(outgoingData.message, "Help is on the way");
+      esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+    }
+  }
 }
 
 void setup() {
@@ -201,7 +262,7 @@ void setup() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setCursor(0, 0);
   M5.Lcd.println("M5StickC Plus ESP-NOW");
-  M5.Lcd.println("DEVICE B (Bidirectional)");
+  M5.Lcd.println("DEVICE B (Emergency Responder)");
   
   // Initialize random number generator
   randomSeed(analogRead(0));
@@ -247,64 +308,70 @@ void setup() {
   
   // Show instructions
   M5.Lcd.setCursor(0, 130);
-  M5.Lcd.println("Btn A: Send update");
+  M5.Lcd.println("Btn A: Send update/Acknowledge");
   M5.Lcd.println("Btn B: Notify button press");
 }
 
 void loop() {
   M5.update(); // Update button state
   
-  // Check if it's time to rotate keys
-  checkKeyRotation();
+  // Check emergency state
+  checkEmergencyState();
   
-  // Check if it's time for a periodic update (every 5 seconds)
-  if (millis() - lastSentTime > 5000) {
-    shouldSendUpdate = true;
-  }
-  
-  // If button A is pressed or it's time for an update
-  if (M5.BtnA.wasPressed() || shouldSendUpdate) {
-    // Send regular update
-    outgoingData.messageType = 0;
-    outgoingData.counter++;
-    outgoingData.value = 25.0 + (float)(outgoingData.counter % 10);
-    sprintf(outgoingData.message, "Update from B: %d", outgoingData.counter);
-    outgoingData.keyIndex = keyMgr.keyIndex;
+  // Only perform normal operations if not in emergency state
+  if (!emergencyActive) {
+    // Check if it's time to rotate keys
+    checkKeyRotation();
     
-    // Display data being sent
-    M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
-    M5.Lcd.setCursor(0, 40);
-    M5.Lcd.setTextColor(CYAN, BLACK);
-    M5.Lcd.println("SENDING TO DEVICE A:");
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.printf("Type: Update, Count: %d\n", outgoingData.counter);
+    // Check if it's time for a periodic update (every 5 seconds)
+    if (millis() - lastSentTime > 5000) {
+      shouldSendUpdate = true;
+    }
     
-    // Send message via ESP-NOW
-    esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+    // If button A is pressed or it's time for an update
+    if (M5.BtnA.wasPressed() || shouldSendUpdate) {
+      // Send regular update
+      outgoingData.messageType = 0;
+      outgoingData.counter++;
+      outgoingData.value = 25.0 + (float)(outgoingData.counter % 10);
+      sprintf(outgoingData.message, "Update from B: %d", outgoingData.counter);
+      outgoingData.keyIndex = keyMgr.keyIndex;
+      
+      // Display data being sent
+      M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
+      M5.Lcd.setCursor(0, 40);
+      M5.Lcd.setTextColor(CYAN, BLACK);
+      M5.Lcd.println("SENDING TO DEVICE A:");
+      M5.Lcd.setTextColor(WHITE, BLACK);
+      M5.Lcd.printf("Type: Update, Count: %d\n", outgoingData.counter);
+      
+      // Send message via ESP-NOW
+      esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+      
+      lastSentTime = millis();
+      shouldSendUpdate = false;
+    }
     
-    lastSentTime = millis();
-    shouldSendUpdate = false;
-  }
-  
-  // If button B is pressed
-  if (M5.BtnB.wasPressed()) {
-    // Send button press notification
-    outgoingData.messageType = 1;
-    sprintf(outgoingData.message, "Button B pressed!");
-    outgoingData.keyIndex = keyMgr.keyIndex;
-    
-    // Display data being sent
-    M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
-    M5.Lcd.setCursor(0, 40);
-    M5.Lcd.setTextColor(CYAN, BLACK);
-    M5.Lcd.println("SENDING TO DEVICE A:");
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.println("Type: Button Press Notification");
-    
-    // Send message via ESP-NOW
-    esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
-    
-    lastSentTime = millis();
+    // If button B is pressed
+    if (M5.BtnB.wasPressed()) {
+      // Send button press notification
+      outgoingData.messageType = 1;
+      sprintf(outgoingData.message, "Button B pressed!");
+      outgoingData.keyIndex = keyMgr.keyIndex;
+      
+      // Display data being sent
+      M5.Lcd.fillRect(0, 40, 240, 40, BLACK); // Clear only send area
+      M5.Lcd.setCursor(0, 40);
+      M5.Lcd.setTextColor(CYAN, BLACK);
+      M5.Lcd.println("SENDING TO DEVICE A:");
+      M5.Lcd.setTextColor(WHITE, BLACK);
+      M5.Lcd.println("Type: Button Press Notification");
+      
+      // Send message via ESP-NOW
+      esp_now_send(peerMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+      
+      lastSentTime = millis();
+    }
   }
   
   delay(50); // Small delay to prevent hogging the CPU
