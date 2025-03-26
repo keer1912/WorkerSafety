@@ -28,6 +28,8 @@ typedef struct message_struct {
   int counter;
   float value;
   uint16_t keyIndex;
+  float heartRate;     // Added heart rate field
+  int batteryLevel;    // Added battery level field
 } message_struct;
 
 // Create structured objects
@@ -112,9 +114,13 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     M5.Lcd.println(incomingData.message);
     M5.Lcd.println("WORKER A NEEDS HELP");
     M5.Lcd.setTextSize(1);
+    
+    // Display vital information
     if (incomingData.value > 0) {
       M5.Lcd.printf("Impact force: %.2f\n", incomingData.value);
     }
+    M5.Lcd.printf("Heart Rate: %.1f BPM\n", incomingData.heartRate);
+    M5.Lcd.printf("Battery: %d%%\n", incomingData.batteryLevel);
     
     // Play alarm sound
     for (int i = 0; i < 5; i++) {
@@ -138,12 +144,35 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   // Only process regular messages if not in emergency state
   if (!emergencyActive) {
     // Handle regular messages
-    M5.Lcd.fillRect(0, 80, 240, 40, BLACK);
+    M5.Lcd.fillRect(0, 80, 240, 60, BLACK);
     M5.Lcd.setCursor(0, 80);
     M5.Lcd.setTextColor(YELLOW, BLACK);
     M5.Lcd.println("Received from Worker A:");
     M5.Lcd.setTextColor(WHITE, BLACK);
     M5.Lcd.printf("Status: %s\n", incomingData.message);
+    
+    // Display vital information
+    if (incomingData.heartRate > 0) {
+      M5.Lcd.printf("Heart Rate: %.1f BPM\n", incomingData.heartRate);
+      
+      // Alert if heart rate is abnormal
+      if (incomingData.heartRate > 100) {
+        M5.Lcd.setTextColor(RED, BLACK);
+        M5.Lcd.println("WARNING: High Heart Rate!");
+        M5.Lcd.setTextColor(WHITE, BLACK);
+      } else if (incomingData.heartRate < 50) {
+        M5.Lcd.setTextColor(RED, BLACK);
+        M5.Lcd.println("WARNING: Low Heart Rate!");
+        M5.Lcd.setTextColor(WHITE, BLACK);
+      }
+    }
+    
+    M5.Lcd.printf("Battery: %d%%\n", incomingData.batteryLevel);
+    if (incomingData.batteryLevel < 20) {
+      M5.Lcd.setTextColor(RED, BLACK);
+      M5.Lcd.println("WARNING: Low Battery!");
+      M5.Lcd.setTextColor(WHITE, BLACK);
+    }
   }
   
   lastReceivedTime = millis();
@@ -221,6 +250,8 @@ void setup() {
   outgoingData.counter = 0;
   outgoingData.value = 0.0;
   outgoingData.keyIndex = keyMgr.keyIndex;
+  outgoingData.heartRate = 0.0;
+  outgoingData.batteryLevel = 100;
   
   // Show instructions
   M5.Lcd.setCursor(0, 130);

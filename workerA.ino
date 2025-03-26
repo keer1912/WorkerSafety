@@ -5,6 +5,12 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <Wire.h>
+#include "MAX30100_PulseOximeter.h"
+
+// Heart rate sensor pins
+#define SDA_PIN 32  
+#define SCL_PIN 33
 
 // REPLACE WITH THE MAC Address of Worker B's device
 uint8_t workerBMacAddress[] = {0x4C, 0x75, 0x25, 0xCB, 0x90, 0x88};  // Replace with actual MAC
@@ -28,6 +34,8 @@ typedef struct message_struct {
   int counter;
   float value;
   uint16_t keyIndex;
+  float heartRate;    // Added heart rate field
+  int batteryLevel;   // Added battery level field
 } message_struct;
 
 // Create structured objects
@@ -60,6 +68,27 @@ const int movingAverageWindow = 10;
 float accelMagnitudeHistory[movingAverageWindow];
 int accelMagnitudeIndex = 0;
 float accelMagnitudeAverage = 0;
+
+// Heart rate sensor
+PulseOximeter pox;
+float heartRate = 0.0;
+unsigned long lastHeartRateCheck = 0;
+const int heartRateCheckInterval = 1000; // Check heart rate every second
+
+// Battery level
+int batteryLevel = 100;
+unsigned long lastBatteryCheck = 0;
+const int batteryCheckInterval = 30000; // Check battery every 30 seconds
+
+// Callback function for heart rate sensor
+void onBeatDetected() {
+  if (userState != FALLEN) {
+    M5.Lcd.fillRect(0, 100, 240, 10, BLACK);
+    M5.Lcd.setCursor(0, 100);
+    M5.Lcd.setTextColor(MAGENTA, BLACK);
+    M5.Lcd.println("♥ Beat");
+  }
+}
 
 // Basic key generation function
 void generateNewKey(uint8_t* keyBuffer) {
@@ -99,12 +128,21 @@ void applyCurrentKey() {
   }
 }
 
+// Get battery percentage
+int getBatteryPercentage() {
+  float batVoltage = M5.Axp.GetVbatData() * 1.1 / 1000;
+  int percentage = (batVoltage - 3.0) / (4.2 - 3.0) * 100;
+  return constrain(percentage, 0, 100); // Clamp to 0-100%
+}
+
 // Send emergency fall detection notification
 void sendFallEmergency() {
   outgoingData.messageType = 4; // Fall emergency notification
   sprintf(outgoingData.message, "EMERGENCY: WORKER FALLEN!");
   outgoingData.value = accelMagnitude; // Send impact force
   outgoingData.keyIndex = keyMgr.keyIndex;
+  outgoingData.heartRate = heartRate; // Include heart rate in emergency message
+  outgoingData.batteryLevel = batteryLevel;
   
   // Display emergency message
   M5.Lcd.fillRect(0, 40, 240, 40, BLACK);
@@ -184,6 +222,7 @@ void detectFall() {
         M5.Lcd.println("FALL DETECTED!");
         M5.Lcd.setTextSize(1);
         M5.Lcd.printf("Impact: %.2f\n", accelMagnitude);
+        M5.Lcd.printf("HR: %.1f BPM\n", heartRate);
         
         M5.Beep.beep();  // Alert sound
         delay(1000);
@@ -223,6 +262,19 @@ void setup() {
   // Initialize random number generator
   randomSeed(analogRead(0));
   
+  // Initialize I2C for heart rate sensor
+  Wire.begin(SDA_PIN, SCL_PIN);
+  
+  // Initialize heart rate sensor
+  M5.Lcd.println("Initializing heart rate sensor...");
+  if (!pox.begin()) {
+    M5.Lcd.println("Heart rate sensor FAILED");
+    delay(1000);
+  } else {
+    M5.Lcd.println("Heart rate sensor ready");
+    pox.setOnBeatDetectedCallback(onBeatDetected);
+  }
+  
   // Display MAC Address
   WiFi.mode(WIFI_STA);
   M5.Lcd.println("MAC: " + WiFi.macAddress());
@@ -261,11 +313,16 @@ void setup() {
   outgoingData.counter = 0;
   outgoingData.value = 0.0;
   outgoingData.keyIndex = keyMgr.keyIndex;
+  outgoingData.heartRate = 0.0;
+  outgoingData.batteryLevel = 100;
   
   // Initialize moving average for fall detection
   for (int i = 0; i < movingAverageWindow; i++) {
     accelMagnitudeHistory[i] = 1.0; // Start with gravity (1G)
   }
+  
+  // Get initial battery level
+  batteryLevel = getBatteryPercentage();
   
   // Show instructions
   M5.Lcd.setCursor(0, 130);
@@ -275,6 +332,35 @@ void setup() {
 
 void loop() {
   M5.update(); // Update button state
+  
+  // Update heart rate sensor
+  pox.update();
+  
+  // Check heart rate at regular intervals
+  if (millis() - lastHeartRateCheck > heartRateCheckInterval) {
+    lastHeartRateCheck = millis();
+    heartRate = pox.getHeartRate();
+    
+    // Update display with heart rate if not in fallen state
+    if (userState != FALLEN) {
+      M5.Lcd.fillRect(0, 60, 240, 10, BLACK);
+      M5.Lcd.setCursor(0, 60);
+      M5.Lcd.printf("HR: %.1f BPM\n", heartRate);
+    }
+  }
+  
+  // Check battery level at regular intervals
+  if (millis() - lastBatteryCheck > batteryCheckInterval) {
+    lastBatteryCheck = millis();
+    batteryLevel = getBatteryPercentage();
+    
+    // Update display with battery level if not in fallen state
+    if (userState != FALLEN) {
+      M5.Lcd.fillRect(0, 70, 240, 10, BLACK);
+      M5.Lcd.setCursor(0, 70);
+      M5.Lcd.printf("Batt: %d%%\n", batteryLevel);
+    }
+  }
   
   // Check for falls
   detectFall();
@@ -287,13 +373,15 @@ void loop() {
       outgoingData.counter++;
       sprintf(outgoingData.message, "Status: OK, Count: %d", outgoingData.counter);
       outgoingData.keyIndex = keyMgr.keyIndex;
+      outgoingData.heartRate = heartRate;
+      outgoingData.batteryLevel = batteryLevel;
       
       M5.Lcd.fillRect(0, 40, 240, 40, BLACK);
       M5.Lcd.setCursor(0, 40);
       M5.Lcd.setTextColor(CYAN, BLACK);
       M5.Lcd.println("SENDING STATUS UPDATE:");
       M5.Lcd.setTextColor(WHITE, BLACK);
-      M5.Lcd.printf("Count: %d\n", outgoingData.counter);
+      M5.Lcd.printf("Count: %d, HR: %.1f\n", outgoingData.counter, heartRate);
       
       esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
       lastSentTime = millis();
@@ -306,6 +394,8 @@ void loop() {
     sprintf(outgoingData.message, "MANUAL ALERT: HELP NEEDED!");
     outgoingData.value = 0.0;
     outgoingData.keyIndex = keyMgr.keyIndex;
+    outgoingData.heartRate = heartRate;
+    outgoingData.batteryLevel = batteryLevel;
     
     M5.Lcd.fillRect(0, 40, 240, 40, BLACK);
     M5.Lcd.setCursor(0, 40);
@@ -318,5 +408,5 @@ void loop() {
     lastSentTime = millis();
   }
   
-  delay(50); // Small delay to prevent hogging the CPU
+  delay(20); // Small delay to prevent hogging the CPU
 } 
