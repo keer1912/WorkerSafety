@@ -13,34 +13,11 @@
 #define SDA_PIN 32  
 #define SCL_PIN 33
 
-// WiFi and MQTT settings
-const char* ssid = "your-wifi-ssid";     // Replace with your WiFi SSID
-const char* password = "your-wifi-pass"; // Replace with your WiFi password
-const char* mqtt_server = "192.168.x.x"; // Replace with your MQTT broker IP (Raspberry Pi)
-const int mqtt_port = 1883;
-const char* mqtt_user = "motherpi";      // MQTT username if needed
-const char* mqtt_password = "12345678";  // MQTT password if needed
-
-// Worker and floor information
-const char* workerID = "worker1";        // Change per device
-const char* floorID = "floor1";          // Change per location
-
-// MQTT topics
-char topic_fall[50];
-char topic_heartrate[50];
-char topic_battery[50];
-char topic_recovery[50];
-char clientId[50];
-
 // REPLACE WITH THE MAC Address of Worker B's device
 uint8_t workerBMacAddress[] = {0x4C, 0x75, 0x25, 0xCB, 0x90, 0x88};  // Replace with actual MAC
 
 // Create a preferences object for storing encryption keys
 Preferences preferences;
-
-// WiFi and MQTT clients
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
 
 // Define a structure for key management
 typedef struct {
@@ -69,11 +46,7 @@ message_struct incomingData;
 // Status tracking
 unsigned long lastSentTime = 0;
 unsigned long lastReceivedTime = 0;
-unsigned long lastMqttPublishTime = 0;
-unsigned long lastMqttReconnectAttempt = 0;
 bool shouldSendUpdate = false;
-bool wifiConnected = false;
-bool mqttConnected = false;
 
 // Peer info
 esp_now_peer_info_t peerInfo;
@@ -163,99 +136,6 @@ int getBatteryPercentage() {
   return constrain(percentage, 0, 100); // Clamp to 0-100%
 }
 
-// Connect to WiFi
-void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiConnected = true;
-    return;
-  }
-  
-  M5.Lcd.fillRect(0, 110, 240, 20, BLACK);
-  M5.Lcd.setCursor(0, 110);
-  M5.Lcd.println("Connecting to WiFi...");
-  
-  // Start connection while maintaining ESP-NOW capability
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.begin(ssid, password);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-    delay(500);
-    M5.Lcd.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiConnected = true;
-    M5.Lcd.fillRect(0, 110, 240, 20, BLACK);
-    M5.Lcd.setCursor(0, 110);
-    M5.Lcd.print("WiFi connected: ");
-    M5.Lcd.println(WiFi.localIP());
-  } else {
-    wifiConnected = false;
-    M5.Lcd.fillRect(0, 110, 240, 20, BLACK);
-    M5.Lcd.setCursor(0, 110);
-    M5.Lcd.println("WiFi connection failed");
-  }
-}
-
-// Reconnect to MQTT broker
-void reconnectMQTT() {
-  if (!wifiConnected) {
-    connectWiFi(); // Ensure WiFi is connected first
-    if (!wifiConnected) return;
-  }
-  
-  if (mqttClient.connected()) {
-    mqttConnected = true;
-    return;
-  }
-  
-  M5.Lcd.fillRect(0, 110, 240, 20, BLACK);
-  M5.Lcd.setCursor(0, 110);
-  M5.Lcd.println("Connecting to MQTT...");
-  
-  // Create a client ID
-  sprintf(clientId, "M5Stick_%s_%s", floorID, workerID);
-  
-  // Attempt to connect
-  if (mqttClient.connect(clientId, mqtt_user, mqtt_password)) {
-    mqttConnected = true;
-    M5.Lcd.fillRect(0, 110, 240, 20, BLACK);
-    M5.Lcd.setCursor(0, 110);
-    M5.Lcd.println("MQTT connected");
-    
-    // Subscribe to topics if needed
-    // mqttClient.subscribe(topic_fall);
-  } else {
-    mqttConnected = false;
-    M5.Lcd.fillRect(0, 110, 240, 20, BLACK);
-    M5.Lcd.setCursor(0, 110);
-    M5.Lcd.print("MQTT failed, rc=");
-    M5.Lcd.println(mqttClient.state());
-  }
-}
-
-// MQTT callback
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  // Handle incoming MQTT messages if needed
-}
-
-// Publish data to MQTT
-void publishDataToMQTT() {
-  if (!mqttConnected) return;
-  
-  // Publish heart rate
-  char heartRateMsg[10];
-  sprintf(heartRateMsg, "%.1f", heartRate);
-  mqttClient.publish(topic_heartrate, heartRateMsg);
-  
-  // Publish battery level
-  char batteryMsg[10];
-  sprintf(batteryMsg, "%d", batteryLevel);
-  mqttClient.publish(topic_battery, batteryMsg);
-}
-
 // Send emergency fall detection notification
 void sendFallEmergency() {
   outgoingData.messageType = 4; // Fall emergency notification
@@ -276,10 +156,6 @@ void sendFallEmergency() {
   // Send emergency message via ESP-NOW
   esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
   
-  // Send emergency message via MQTT if connected
-  if (mqttConnected) {
-    mqttClient.publish(topic_fall, "Fall Detected!");
-  }
 }
 
 // Callback function called when data is sent
@@ -306,10 +182,6 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     M5.Lcd.println("Help is coming!");
     M5.Lcd.println(incomingData.message);
     
-    // If we're recovered from a fall, publish to MQTT
-    if (mqttConnected) {
-      mqttClient.publish(topic_recovery, "Help is on the way");
-    }
     return;
   }
   
@@ -374,11 +246,6 @@ void detectFall() {
         M5.Lcd.setCursor(0, 0);
         M5.Lcd.println("RECOVERED!");
         
-        // Publish recovery message to MQTT if connected
-        if (mqttConnected) {
-          mqttClient.publish(topic_recovery, "Worker has recovered from fall");
-        }
-        
         delay(1000);
       }
       break;
@@ -399,12 +266,6 @@ void setup() {
   // Initialize random number generator
   randomSeed(analogRead(0));
   
-  // Generate MQTT topics
-  sprintf(topic_fall, "/%s/%s/falldetect", floorID, workerID);
-  sprintf(topic_heartrate, "/%s/%s/heartrate", floorID, workerID);
-  sprintf(topic_battery, "/%s/%s/battery", floorID, workerID);
-  sprintf(topic_recovery, "/%s/%s/recovery", floorID, workerID);
-  
   // Initialize I2C for heart rate sensor
   Wire.begin(SDA_PIN, SCL_PIN);
   
@@ -419,21 +280,9 @@ void setup() {
   }
   
   // Initialize WiFi in AP+STA mode
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   M5.Lcd.println("MAC: " + WiFi.macAddress());
   M5.Lcd.println("Use this MAC for Worker B!");
-  
-  // Connect to WiFi
-  connectWiFi();
-  
-  // Setup MQTT connection
-  mqttClient.setServer(mqtt_server, mqtt_port);
-  mqttClient.setCallback(mqttCallback);
-  
-  // Try to connect to MQTT broker
-  if (wifiConnected) {
-    reconnectMQTT();
-  }
   
   // Initialize the key manager
   initializeKeyManager();
@@ -517,34 +366,6 @@ void loop() {
     }
   }
   
-  // Check WiFi and MQTT connectivity
-  if (WiFi.status() != WL_CONNECTED) {
-    wifiConnected = false;
-    mqttConnected = false;
-    
-    // Try to reconnect WiFi every 30 seconds
-    if (millis() - lastMqttReconnectAttempt > 30000) {
-      lastMqttReconnectAttempt = millis();
-      connectWiFi();
-    }
-  } else {
-    wifiConnected = true;
-    
-    // Check MQTT connection
-    if (!mqttClient.connected()) {
-      mqttConnected = false;
-      
-      // Try to reconnect MQTT every 5 seconds
-      if (millis() - lastMqttReconnectAttempt > 5000) {
-        lastMqttReconnectAttempt = millis();
-        reconnectMQTT();
-      }
-    } else {
-      mqttConnected = true;
-      mqttClient.loop();
-    }
-  }
-  
   // Check for falls
   detectFall();
   
@@ -571,12 +392,6 @@ void loop() {
     }
   }
   
-  // Publish data to MQTT every 10 seconds
-  if (mqttConnected && millis() - lastMqttPublishTime > 10000) {
-    lastMqttPublishTime = millis();
-    publishDataToMQTT();
-  }
-  
   // Manual alert button (Button B)
   if (M5.BtnB.wasPressed() && userState != FALLEN) {
     outgoingData.messageType = 4; // Emergency notification
@@ -594,11 +409,6 @@ void loop() {
     M5.Lcd.println("Manual emergency alert!");
     
     esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
-    
-    // Also send to MQTT if connected
-    if (mqttConnected) {
-      mqttClient.publish(topic_fall, "Manual Emergency Alert!");
-    }
     
     lastSentTime = millis();
   }
