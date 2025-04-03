@@ -1,5 +1,6 @@
 // WORKER SAFETY SYSTEM - WORKER A (Fall Detection)
 // This device is worn by the worker and detects falls
+// Communicates via ESP-NOW to Worker B and MQTT to dashboard
 
 #include <M5StickCPlus.h>
 #include <esp_now.h>
@@ -9,15 +10,44 @@
 #include "MAX30100_PulseOximeter.h"
 #include <PubSubClient.h>
 
+//=============== CONFIGURATION SECTION - EDIT THESE VALUES ===============//
+
+// WiFi credentials - update with your network details
+const char* ssid = "Xiaomi Nya";          // Your Wi-Fi name
+const char* password = "itamenekos";      // Your Wi-Fi password
+
+// MQTT Configuration
+const char* mqtt_server = "test.mosquitto.org";  // Public MQTT broker
+const int mqtt_port = 1883;                      // Standard MQTT port
+const char* mqtt_user = "";                      // Leave empty if no auth
+const char* mqtt_password = "";                  // Leave empty if no auth
+
+// Worker Identification for MQTT Dashboard
+const char* worker_id = "floor1_worker1";  // Format: floor#_worker# (change for each device)
+const char* project_id = "SIT_workersafety";  // Match dashboard project ID
+
+// REPLACE WITH THE MAC Address of Worker B's device (ESP-NOW communication)
+uint8_t workerBMacAddress[] = {0x4C, 0x75, 0x25, 0xCB, 0x90, 0x88};  // Replace with actual MAC
+
+//=============== END CONFIGURATION SECTION ===============//
+
 // Heart rate sensor pins
 #define SDA_PIN 32  
 #define SCL_PIN 33
 
-// REPLACE WITH THE MAC Address of Worker B's device
-uint8_t workerBMacAddress[] = {0x4C, 0x75, 0x25, 0xCB, 0x90, 0x88};  // Replace with actual MAC
-
 // Create a preferences object for storing encryption keys
 Preferences preferences;
+
+// WiFi and MQTT clients
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+// MQTT topics (formatted for dashboard compatibility)
+String base_topic;
+String heartrate_topic;
+String battery_topic;
+String fall_topic;
+String status_topic;
 
 // Define a structure for key management
 typedef struct {
@@ -28,7 +58,7 @@ typedef struct {
 
 KeyManager keyMgr;
 
-// Define a data structure for communication
+// Define a data structure for ESP-NOW communication
 typedef struct message_struct {
   uint8_t messageType;  // 0 = regular update, 1 = button press, 2 = response, 3 = key update, 4 = fall emergency
   char message[32];
@@ -46,6 +76,8 @@ message_struct incomingData;
 // Status tracking
 unsigned long lastSentTime = 0;
 unsigned long lastReceivedTime = 0;
+unsigned long lastMqttPublishTime = 0;
+unsigned long lastReconnectAttempt = 0;
 bool shouldSendUpdate = false;
 
 // Peer info
@@ -81,13 +113,17 @@ int batteryLevel = 100;
 unsigned long lastBatteryCheck = 0;
 const int batteryCheckInterval = 30000; // Check battery every 30 seconds
 
+// Connection status flags
+bool wifiConnected = false;
+bool mqttConnected = false;
+
 // Callback function for heart rate sensor
 void onBeatDetected() {
   if (userState != FALLEN) {
     M5.Lcd.fillRect(0, 100, 240, 10, BLACK);
     M5.Lcd.setCursor(0, 100);
     M5.Lcd.setTextColor(MAGENTA, BLACK);
-    M5.Lcd.println("♥ Beat");
+    M5.Lcd.println("♥️ Beat");
   }
 }
 
@@ -136,7 +172,7 @@ int getBatteryPercentage() {
   return constrain(percentage, 0, 100); // Clamp to 0-100%
 }
 
-// Send emergency fall detection notification
+// Send emergency fall detection notification (ESP-NOW)
 void sendFallEmergency() {
   outgoingData.messageType = 4; // Fall emergency notification
   sprintf(outgoingData.message, "EMERGENCY: WORKER FALLEN!");
@@ -155,10 +191,37 @@ void sendFallEmergency() {
   
   // Send emergency message via ESP-NOW
   esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
-  
 }
 
-// Callback function called when data is sent
+// Publish fall status to MQTT dashboard
+void publishFallStatus() {
+  if (!mqttConnected) return;
+
+  // Publish fall status (format compatible with dashboard)
+  if (userState == FALLEN) {
+    mqttClient.publish(fall_topic.c_str(), "Fallen");
+  } else {
+    mqttClient.publish(fall_topic.c_str(), "OK");
+  }
+}
+
+// Publish all sensor data to MQTT dashboard
+void publishSensorData() {
+  if (!mqttConnected) return;
+  
+  // Publish heart rate
+  String hr_str = String(heartRate);
+  mqttClient.publish(heartrate_topic.c_str(), hr_str.c_str());
+  
+  // Publish battery level
+  String batt_str = String(batteryLevel);
+  mqttClient.publish(battery_topic.c_str(), batt_str.c_str());
+  
+  // Publish fall status
+  publishFallStatus();
+}
+
+// Callback function called when data is sent via ESP-NOW
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   M5.Lcd.setCursor(0, 120);
   if (status == ESP_NOW_SEND_SUCCESS) {
@@ -170,7 +233,7 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   }
 }
 
-// Callback function called when data is received
+// Callback function called when data is received via ESP-NOW
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   memcpy(&incomingData, data, sizeof(incomingData));
   
@@ -196,6 +259,66 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   }
   
   lastReceivedTime = millis();
+}
+
+// Connect to WiFi network
+void connectWiFi() {
+  // We need to disconnect from WiFi before changing mode
+  WiFi.disconnect();
+  delay(100);
+  
+  // Set WiFi mode to allow both station (for MQTT) and ESP-NOW
+  WiFi.mode(WIFI_AP_STA);
+  
+  // Start WiFi connection
+  WiFi.begin(ssid, password);
+  
+  M5.Lcd.fillRect(0, 40, 240, 20, BLACK);
+  M5.Lcd.setCursor(0, 40);
+  M5.Lcd.println("Connecting to WiFi...");
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    M5.Lcd.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    M5.Lcd.println("\nWiFi connected!");
+    M5.Lcd.println(WiFi.localIP().toString());
+  } else {
+    wifiConnected = false;
+    M5.Lcd.println("\nWiFi connection failed");
+  }
+}
+
+// Connect to MQTT broker
+void connectMQTT() {
+  if (!wifiConnected) return;
+  
+  M5.Lcd.fillRect(0, 80, 240, 20, BLACK);
+  M5.Lcd.setCursor(0, 80);
+  M5.Lcd.println("Connecting to MQTT...");
+  
+  // Create a unique client ID
+  String clientId = "M5StickC_";
+  clientId += worker_id;
+  clientId += "_";
+  clientId += String(millis() % 1000);
+  
+  // Connect to MQTT broker
+  if (mqttClient.connect(clientId.c_str(), mqtt_user, mqtt_password)) {
+    mqttConnected = true;
+    M5.Lcd.println("MQTT connected!");
+    
+    // Announce online status
+    mqttClient.publish(status_topic.c_str(), "online");
+  } else {
+    mqttConnected = false;
+    M5.Lcd.println("MQTT connection failed");
+  }
 }
 
 // Fall detection function
@@ -231,8 +354,11 @@ void detectFall() {
         delay(1000);
         M5.Beep.mute();
         
-        // Send emergency message to Worker B
+        // Send emergency message to Worker B via ESP-NOW
         sendFallEmergency();
+        
+        // Update fall status on MQTT dashboard
+        publishFallStatus();
         
         delay(debounceTime);
       }
@@ -245,6 +371,9 @@ void detectFall() {
         M5.Lcd.fillScreen(BLACK);
         M5.Lcd.setCursor(0, 0);
         M5.Lcd.println("RECOVERED!");
+        
+        // Update fall status on MQTT dashboard
+        publishFallStatus();
         
         delay(1000);
       }
@@ -263,6 +392,13 @@ void setup() {
   M5.Lcd.println("Worker Safety System");
   M5.Lcd.println("Worker A (Fall Detection)");
   
+  // Setup MQTT topics for dashboard compatibility
+  base_topic = String("worker/") + project_id;
+  heartrate_topic = base_topic + "/heartrate/" + worker_id;
+  battery_topic = base_topic + "/battery/" + worker_id;
+  fall_topic = base_topic + "/fall/" + worker_id;
+  status_topic = base_topic + "/status/" + worker_id;
+  
   // Initialize random number generator
   randomSeed(analogRead(0));
   
@@ -279,8 +415,10 @@ void setup() {
     pox.setOnBeatDetectedCallback(onBeatDetected);
   }
   
-  // Initialize WiFi in AP+STA mode
-  WiFi.mode(WIFI_STA);
+  // Connect to WiFi (needed for MQTT)
+  connectWiFi();
+  
+  // Display MAC address for ESP-NOW setup
   M5.Lcd.println("MAC: " + WiFi.macAddress());
   M5.Lcd.println("Use this MAC for Worker B!");
   
@@ -325,6 +463,12 @@ void setup() {
     accelMagnitudeHistory[i] = 1.0; // Start with gravity (1G)
   }
   
+  // Configure MQTT
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  
+  // Connect to MQTT broker
+  connectMQTT();
+  
   // Get initial battery level
   batteryLevel = getBatteryPercentage();
   
@@ -339,6 +483,29 @@ void loop() {
   
   // Update heart rate sensor
   pox.update();
+  
+  // Check WiFi connection and reconnect if needed
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiConnected = false;
+    if (millis() - lastReconnectAttempt > 10000) {
+      lastReconnectAttempt = millis();
+      connectWiFi();
+    }
+  } else {
+    wifiConnected = true;
+  }
+  
+  // Reconnect MQTT if lost
+  if (wifiConnected && !mqttClient.connected()) {
+    mqttConnected = false;
+    if (millis() - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = millis();
+      connectMQTT();
+    }
+  } else if (wifiConnected) {
+    mqttConnected = true;
+    mqttClient.loop();
+  }
   
   // Check heart rate at regular intervals
   if (millis() - lastHeartRateCheck > heartRateCheckInterval) {
@@ -369,7 +536,7 @@ void loop() {
   // Check for falls
   detectFall();
   
-  // Send periodic status update (every 5 seconds)
+  // Send periodic status update via ESP-NOW (every 5 seconds)
   if (millis() - lastSentTime > 5000) {
     // Only send if not in FALLEN state
     if (userState != FALLEN) {
@@ -392,8 +559,15 @@ void loop() {
     }
   }
   
-  // Manual alert button (Button B)
+  // Publish sensor data to MQTT dashboard (every 2 seconds)
+  if (mqttConnected && millis() - lastMqttPublishTime > 2000) {
+    lastMqttPublishTime = millis();
+    publishSensorData();
+  }
+  
+  // Manual alert button (Button 😎
   if (M5.BtnB.wasPressed() && userState != FALLEN) {
+    // Send alert via ESP-NOW
     outgoingData.messageType = 4; // Emergency notification
     sprintf(outgoingData.message, "MANUAL ALERT: HELP NEEDED!");
     outgoingData.value = 0.0;
@@ -410,8 +584,12 @@ void loop() {
     
     esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
     
+    // Also simulate a fall for dashboard demonstration
+    userState = FALLEN;
+    publishFallStatus();
+    
     lastSentTime = millis();
   }
   
   delay(20); // Small delay to prevent hogging the CPU
-} 
+}
