@@ -6,6 +6,7 @@ import time
 
 app = Flask(__name__)
 ser = None
+ser6 = None
 
 data_store = {
     # Floor ID → Worker ID → Sensor type → Value
@@ -44,6 +45,8 @@ def on_message(client, userdata, msg):
     try:
         message = msg.payload.decode('utf-8')
         topic = msg.topic  # e.g., "/floor1/worker23/heartrate/75"
+
+        print(f"📥 Received Message: Topic = {topic}, Payload = {message}")  # PRINT RECEIVED DATA
 
         payload = topic + "/" + message
         print("Payload: " + payload)
@@ -93,8 +96,8 @@ client.on_message = on_message
 # client.username_pw_set("username", "passwd")
 
 print("Connecting to MQTT broker...")
-# Connect to the broker
-client.connect("192.168.224.201", 1883, 60)
+# Connect to the broker (change IP)
+client.connect("172.20.10.6", 1883, 60)
 
 # Start the MQTT client loop in a background thread
 mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
@@ -109,12 +112,55 @@ def main():
 def get_data():
     return jsonify(data_store)
 
+# def read_ser6():
+#     global ser_com6
+#     while True:
+#         if ser_com6 is not None and ser_com6.in_waiting > 0:
+#             message = ser_com6.readline().decode('utf-8').strip()
+#             print(f"Received from COM6: {message}")
+            
+#             # # Extract and store data from COM6 message
+#             # # Assuming format: "Got valid message: From SITE_A: /floor1/worker1/heartrate/60"
+#             # if "Got valid message:" in message:
+#             #     parts = message.split(": ")
+#             #     if len(parts) == 2:
+#             #         print(f"Message received from COM6: {parts[1]}")
+#             #         # Here, add logic to extract and store the data as needed (like updating `data_store`)
+#             #         # Example: Update data_store based on the received message format
+
+def read_ser6():
+    global ser_com6
+    while True:
+        if ser_com6 is not None and ser_com6.in_waiting > 0:
+            message = ser_com6.readline().decode('utf-8').strip()
+            
+            # Filter to only print the specific message
+            if "Got valid message:" in message:
+                print(f"Received from COM6: {message}")
+
+
+def ser6_thread():
+    try:
+        global ser_com6
+        ser_com6 = serial.Serial('COM6', 9600, timeout=1)
+        print("Serial port COM6 opened successfully")
+
+        serial_thread = threading.Thread(target=read_ser6, daemon=True)
+        serial_thread.start()
+
+    except Exception as e:
+        print(f"Failed to open serial port COM6: {e}")
+        ser_com6 = None
+
 if __name__ == "__main__":
     try:
-        ser = serial.Serial('COM3', 9600, timeout=1)
-        print("Serial port opened successfully")    
+        ser = serial.Serial('COM4', 9600, timeout=1)
+        print("Serial port COM4 opened successfully")    
     except Exception as e:
         print(f"Failed to open serial port: {e}")
         ser = None
+        ser6 = None
+
+    ser6_thread()
         
     app.run(host="0.0.0.0", debug=False)
