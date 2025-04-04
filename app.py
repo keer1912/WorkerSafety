@@ -1,3 +1,7 @@
+# SITE A SETUP
+# Change line 103 to MQTT broker IP
+# Change line 120 to COM port connected to TX LoRa
+
 from flask import Flask, render_template, jsonify
 import paho.mqtt.client as mqtt
 import threading
