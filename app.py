@@ -49,8 +49,6 @@ def on_message(client, userdata, msg):
         message = msg.payload.decode('utf-8')
         topic = msg.topic  # e.g., "/floor1/worker23/heartrate/75"
 
-        print(f"📥 Received Message: Topic = {topic}, Payload = {message}")  # PRINT RECEIVED DATA
-
         payload = topic + "/" + message
         print("Payload: " + payload)
         
@@ -106,6 +104,23 @@ client.connect("192.168.0.111", 1883, 60)
 mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
 mqtt_thread.start()
 
+# Read and print COM port to log LoRa messages
+def serial_reader():
+    global ser
+    if ser is None:
+        print("Serial port not available.")
+        return
+
+    print("Started serial reader thread...")
+    while True:
+        try:
+            line = ser.readline().decode('utf-8').strip()
+            if line:
+                print(f"Serial: {line}")
+        except Exception as e:
+            print(f"Error reading from serial: {e}")
+            break
+
 @app.route("/")
 def main():
     return render_template("dashboard.html", data=data_store)
@@ -122,5 +137,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Failed to open serial port: {e}")
         ser = None
+
+    serial_thread = threading.Thread(target=serial_reader, daemon=True)
+    serial_thread.start()
         
     app.run(host="0.0.0.0", debug=False)
