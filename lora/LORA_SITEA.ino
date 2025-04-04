@@ -154,8 +154,50 @@ void processSerialData(const char *input) {
     rf95.send((uint8_t *)&radiopacket, sizeof(radiopacket));
     rf95.waitPacketSent();
 
-    Serial.print("Sent raw: ");
-    Serial.println(input);
+    bool ackReceived = false;
+    const unsigned long ackTimeout = 2000;  // 2 seconds timeout
+    const uint8_t maxRetries = 3;
+    uint8_t attempts = 0;
+
+    while (!ackReceived && attempts < maxRetries) {
+        unsigned long startTime = millis();
+        while (millis() - startTime < ackTimeout) {
+            if (rf95.available()) {
+                uint8_t buf[sizeof(Packet)];
+                uint8_t len = sizeof(buf);
+
+                if (rf95.recv(buf, &len)) {
+                    Packet* ack = (Packet*)buf;
+                    if (strcmp(ack->recipient_id, node_id) == 0 &&
+                        calculateChecksum(ack) == ack->checksum &&
+                        strncmp(ack->payload, "ACK", 3) == 0) {
+                        ackReceived = true;
+                        const char *ackMsg[] = {"ACK received", "", ""};
+                        displayLines(ackMsg, 1);
+                        Serial.print("Sent raw: ");
+                        Serial.println(input);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!ackReceived) {
+            attempts++;
+            rf95.send((uint8_t *)&radiopacket, sizeof(radiopacket));
+            rf95.waitPacketSent();
+            const char *retryMsg[] = {"Retrying...", "", ""};
+            displayLines(retryMsg, 1);
+            Serial.println("Retrying...");
+        }
+    }
+
+    if (!ackReceived) {
+        Serial.println("Failed");
+    }
+    else {
+        Serial.println("ACK received");
+    }
 }
 
 void loop() {
