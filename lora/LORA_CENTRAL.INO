@@ -167,7 +167,7 @@ void loop() {
                   struct Packet replyPacket;
                   strncpy(replyPacket.sender_id, node_id, sizeof(replyPacket.sender_id) - 1);
                   strncpy(replyPacket.recipient_id, receivedPacket->sender_id, sizeof(replyPacket.recipient_id) - 1);
-                  snprintf(replyPacket.payload, sizeof(replyPacket.payload), "Come here hehe #%d", packetnum++);
+                  snprintf(replyPacket.payload, sizeof(replyPacket.payload), "ACK");
                   // Cal checksum
                   replyPacket.checksum = calculateChecksum(&replyPacket);
 
