@@ -1,6 +1,6 @@
 # SITE A SETUP
-# Change line 103 to MQTT broker IP
-# Change line 120 to COM port connected to TX LoRa
+# Change line 13 to MQTT broker IP
+# Change line 12 to COM port connected to TX LoRa
 
 from flask import Flask, render_template, jsonify
 import paho.mqtt.client as mqtt
@@ -9,6 +9,8 @@ import serial
 import time
 
 app = Flask(__name__)
+PORT = 'COM4'                       # Change
+BROKER_ADD = "192.168.0.111"        # Change
 ser = None
 
 data_store = {
@@ -98,7 +100,7 @@ client.on_message = on_message
 
 print("Connecting to MQTT broker...")
 # Connect to the broker (change IP)
-client.connect("192.168.0.111", 1883, 60)
+client.connect(BROKER_ADD, 1883, 60)
 
 # Start the MQTT client loop in a background thread
 mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
@@ -132,8 +134,8 @@ def get_data():
 
 if __name__ == "__main__":
     try:
-        ser = serial.Serial('COM4', 9600, timeout=1)
-        print("Serial port COM4 opened successfully")    
+        ser = serial.Serial(PORT, 9600, timeout=1)
+        print(f"Serial port {PORT} opened successfully")    
     except Exception as e:
         print(f"Failed to open serial port: {e}")
         ser = None
