@@ -3,7 +3,6 @@
   <head>
     <title>Worker Safety Dashboard</title>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
       body {
         font-family: Arial, sans-serif;
@@ -21,199 +20,34 @@
         border-radius: 5px;
         padding: 15px;
         margin: 10px;
-        width: 300px;
+        width: 250px;
         display: inline-block;
         background-color: #f9f9f9;
-        transition: all 0.3s ease;
-        position: relative;
       }
-      .worker-fallen {
+      .alert {
         background-color: #ffdddd;
-        border: 3px solid #ff0000;
-        box-shadow: 0 0 15px rgba(255, 0, 0, 0.6);
-        animation: pulse 1.5s infinite;
-      }
-      @keyframes pulse {
-        0% { box-shadow: 0 0 15px rgba(255, 0, 0, 0.6); }
-        50% { box-shadow: 0 0 25px rgba(255, 0, 0, 0.9); }
-        100% { box-shadow: 0 0 15px rgba(255, 0, 0, 0.6); }
       }
       .worker-name {
         font-weight: bold;
         margin-bottom: 10px;
-        font-size: 1.2rem;
       }
       .sensor-value {
-        margin: 8px 0;
-        font-size: 1.1rem;
+        margin: 5px 0;
       }
       .status-ok {
         color: green;
-        font-weight: normal;
       }
       .status-alert {
-        color: white;
+        color: red;
         font-weight: bold;
-        background-color: #d9534f;
-        padding: 8px;
-        border-radius: 4px;
-        display: inline-block;
-        animation: blink 1s infinite;
-      }
-      @keyframes blink {
-        0% { opacity: 1; }
-        50% { opacity: 0.7; }
-        100% { opacity: 1; }
       }
       .template {
         display: none;
       }
-      .emergency-icon {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        font-size: 2rem;
-        color: #ff0000;
-        animation: rotate 2s infinite linear;
-      }
-      @keyframes rotate {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-      .emergency-banner {
-        background-color: #ff0000;
-        color: white;
-        font-weight: bold;
-        padding: 10px;
-        margin-top: 10px;
-        border-radius: 4px;
-        text-align: center;
-        font-size: 1.2rem;
-        animation: flash 1s infinite;
-      }
-      @keyframes flash {
-        0% { background-color: #ff0000; }
-        50% { background-color: #c70000; }
-        100% { background-color: #ff0000; }
-      }
-      .settings-panel {
-        background-color: #f0f0f0;
-        padding: 15px;
-        border-radius: 5px;
-        margin-bottom: 20px;
-      }
-      .connection-status {
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 3px;
-        margin-left: 10px;
-        font-weight: bold;
-      }
-      .connected {
-        background-color: #d4edda;
-        color: #155724;
-      }
-      .disconnected {
-        background-color: #f8d7da;
-        color: #721c24;
-      }
-      .connecting {
-        background-color: #fff3cd;
-        color: #856404;
-      }
-      input, button {
-        padding: 6px 10px;
-        margin-right: 5px;
-      }
-      .log-panel {
-        margin-top: 20px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 10px;
-        background-color: #f9f9f9;
-      }
-      .log-container {
-        height: 150px;
-        overflow-y: auto;
-        font-family: monospace;
-        font-size: 12px;
-        background-color: #f5f5f5;
-        padding: 10px;
-        border-radius: 3px;
-      }
-      .log-entry {
-        margin-bottom: 2px;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 2px;
-      }
-      .timestamp {
-        color: #666;
-        margin-right: 5px;
-      }
-      .emergency-sound-control {
-        margin-top: 10px;
-      }
-      .hidden {
-        display: none;
-      }
-      .alert-counter {
-        position: absolute;
-        top: 0;
-        right: 0;
-        background-color: red;
-        color: white;
-        padding: 5px 10px;
-        border-radius: 50%;
-        font-weight: bold;
-      }
-      #emergency-alert {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        background-color: #ff0000;
-        color: white;
-        text-align: center;
-        padding: 15px;
-        font-size: 1.5rem;
-        font-weight: bold;
-        z-index: 1000;
-        display: none;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-      }
     </style>
   </head>
   <body>
-    <!-- Emergency Alert Banner (Shows when any worker has fallen) -->
-    <div id="emergency-alert">
-      ⚠️ EMERGENCY: Worker Fall Detected! ⚠️
-    </div>
-
     <h1>Worker Safety Dashboard</h1>
-
-    <!-- MQTT Connection Settings -->
-    <div class="settings-panel">
-      <h3>MQTT Connection 
-        <span id="connection-status" class="connection-status disconnected">Disconnected</span>
-      </h3>
-      <div>
-        <label>Project ID:</label>
-        <input type="text" id="project-id" value="SIT_workersafety" />
-        <label>Broker:</label>
-        <input type="text" id="broker-address" value="test.mosquitto.org" />
-        <label>Port:</label>
-        <input type="number" id="broker-port" value="8081" />
-        <button id="connect-btn">Connect</button>
-        <button id="disconnect-btn">Disconnect</button>
-      </div>
-      <div class="emergency-sound-control">
-        <label>
-          <input type="checkbox" id="sound-toggle" checked />
-          Enable Emergency Sound Alerts
-        </label>
-        <button id="test-alarm" class="hidden">Test Alarm</button>
-      </div>
-    </div>
 
     <!-- Main container for dynamic content -->
     <div id="dashboard-container"></div>
@@ -222,7 +56,7 @@
     <div class="templates template">
       <!-- Floor template -->
       <div id="floor-template" class="floor-section">
-        <h2><span class="floor-id"></span> <span class="alert-counter hidden">0</span></h2>
+        <h2><span class="floor-id"></span></h2>
         <div class="floor-workers"></div>
       </div>
 
@@ -236,39 +70,12 @@
         <div class="sensor-value">
           Fall Status: <span class="status"></span>
         </div>
-        <div class="sensor-value">
-          Last Update: <span class="last-update"></span>
-        </div>
-        <div class="emergency-icon hidden">⚠️</div>
-        <div class="emergency-banner hidden">WORKER FALLEN!</div>
       </div>
     </div>
 
-    <!-- Message Log -->
-    <div class="log-panel">
-      <h3>Message Log</h3>
-      <div id="log-container" class="log-container"></div>
-    </div>
-
     <script>
-      // MQTT Client
-      let mqttClient;
-      let isConnected = false;
-      let emergencySoundEnabled = true;
-      let alarmAudio;
-      let fallenWorkers = {};
-
-      // Create alarm sound
-      function createAlarmSound() {
-        alarmAudio = new Audio();
-        alarmAudio.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZSA0PVq/n77BdGAg+ltryxnMpBSl+y/HaizsIGGS57OihUBELTKXh8bllHgU2jdXzzn0vBSF1xe/glEILElyx6OyrWBUIQ5zd8sFuJAUuhM/z1YU2Bhxqvu7mnEoODlOt5vCzYBoGPJPZ88p2KwUme8rx3I4+CRZiturqpVITC0mi4PK8aB8GM4nU8tGAMQYeb8Lv45xLDg1Sr+fwtmIcBTqQ2PLNei4KI3fH8d+RQgsVW7Ln7KdWFQlBmd3zxG8mBiyAzPPXiDkHGWa37OihUxIKSaDe8b5sIgYxhtL02YM0BxppvO/mnk0QDFCp5fC1YxwFN4zW886CMQYfccTw4ZVEDA9Xr+jxtmQeBjeO1vPQgDEGHGzB7+ShTxAKTabj8blnHwU0idPy1IU2Bhpqvu/moVAQC06n5O+3ZB0GM4rU89OEMwUcbcDu5aJQDwlLpePwu2ohBjGF0fPXhzgHGGa57uajUhEKSqPg8b1qIAUxiNPz1IIzBhxtwu7lo1AOC02o4/C6aiEFMYfS89WGNwYaZ77u56RSDQ1OpOPxvGwiBTCG0vPWhzgHGme+7+ijUxALTKXi8LxsIwYyidPy1YY3Bhpqv+7npFMODU2k4/G9bCIFMIbS89aHOAcaZ77v6KNTEAtMpeLwvGwjBjKJ0/LVhjcGGmq/7uekUw4NTaTj8b1sIgUwhtLz1oc4BxpnvvHro1MQC0yl4vC8bCMGMonT8tWGNwYaar/v56RTDg1NpOTxvWwiBTCG0vPWhzgHGme+8eujUxALTKXi8LxsIwYyidTy1YY3Bhpqv+/npFQODU2k5PG9bSIFMIbS89aGOAcaZ77x66NTEAtMpeLwvGwjBjKJ1PLVhzcGGmq/7+ekVA4NTaTk8b1tIgUwhtLz1oY4Bxpnv+/qo1MQC0yk4vC8bSMGMonU8tWHNwYaar/v56RUDg1NpOTxvW0iBTCG0vPWhjgHGme/7+qjUxALTKTi8LxtIwYyidTy1Yc3Bhpqv+/npFQODU2k5PG9bSIFMIbS89aGOAcaZ7/v6qNTEAtMpOPwvG0jBjKJ1PLVhzcGGmq/7+ekVA4NTaTk8b1tIgUwhtLz1oY4Bxpnv+/qo1MQC0yk4/C8bSMGMonU8tWHNwYaar/v56RUDg1NpOTxvW0iBTCG0vPWhjgHGme/7+qjUxALTKTj8LxtIwYyidTy1Yc3Bhpqv+/npFQODU2k5PG9bSIFMIbS89aGOAcaZ7/v6qNTEAtMpOPwvG0jBjKJ1PLVhzcGGmq/7+ekVA4NTaTk8b1tIgUwhtLz1oY4Bxpnv+/qo1MQC0yk4/C8bSMGMonU8tWHNwYaa8Dv56RUDg1NpOTxvW0iBTCG0vPWhjgHGme/7+qjUxALTKTj8LxtIwYyidTy1Yc3BhprwO/npFQODU2k5PG9bSIFMIbS89aGOAcaZ7/v6qNTEAtMpOPwvG0jBjKJ1PLVhzcGGmvA7+ekVA4NTaTk8b1tIgUwhtLz1oY4Bxpnv+/qo1MQC0yk4/C8bSMGMonU8tWHNwYaa8Dv56RUDg1NpOTxvW0iBTCG0vPWhjgHGme/7+qjUxALTKTj8LxtIwYyidTy1Yc3Bhprv+/npFQODU2k5PG9bSIF';
-        alarmAudio.loop = true;
-      }
-      
-      createAlarmSound();
-
-      // Data structure to hold worker information
-      const workerData = {};
+      // Keep track of previous data state
+      let previousData = {};
 
       // Keep references to DOM elements by ID
       const elementRefs = {
@@ -276,361 +83,130 @@
         workers: {}, // floorId_workerId -> DOM element
       };
 
-      // Play emergency sound when fall detected
-      function playEmergencySound() {
-        if (emergencySoundEnabled) {
-          alarmAudio.play();
-        }
-      }
-
-      // Stop emergency sound
-      function stopEmergencySound() {
-        alarmAudio.pause();
-        alarmAudio.currentTime = 0;
-      }
-
-      // Function to update the fallen workers count
-      function updateEmergencyStatus() {
-        // Count fallen workers
-        let fallenCount = 0;
-        for (const floor in workerData) {
-          let floorFallenCount = 0;
-          
-          for (const workerId in workerData[floor]) {
-            if (workerData[floor][workerId].falldetect === "Fallen") {
-              fallenCount++;
-              floorFallenCount++;
-              
-              // Update fallen worker if not already tracked
-              if (!fallenWorkers[workerId]) {
-                fallenWorkers[workerId] = true;
-                
-                // Play sound only for new fallen worker
-                playEmergencySound();
-              }
-            } else {
-              // Remove from fallen workers if recovered
-              if (fallenWorkers[workerId]) {
-                delete fallenWorkers[workerId];
-              }
-            }
-          }
-          
-          // Update floor alert counter
-          const floorCounter = elementRefs.floors[floor].find(".alert-counter");
-          if (floorFallenCount > 0) {
-            floorCounter.text(floorFallenCount).removeClass("hidden");
-          } else {
-            floorCounter.addClass("hidden");
-          }
-        }
-        
-        // Show/hide emergency banner based on fallen count
-        if (fallenCount > 0) {
-          $("#emergency-alert").show();
-        } else {
-          $("#emergency-alert").hide();
-          stopEmergencySound();
-        }
-      }
-
-      // Connect to MQTT broker
-      function connectMQTT() {
-        const projectId = $("#project-id").val();
-        const brokerAddress = $("#broker-address").val();
-        const brokerPort = parseInt($("#broker-port").val());
-
-        if (!projectId || !brokerAddress || !brokerPort) {
-          logMessage("Please fill in all connection fields");
-          return;
-        }
-
-        // Update connection status
-        $("#connection-status")
-          .text("Connecting...")
-          .removeClass("connected disconnected")
-          .addClass("connecting");
-
-        // Create a unique client ID with worker ID
-        const clientId = "dashboard_" + projectId + "_" + Math.random().toString(16).substring(2, 10);
-        
-        try {
-          // Create MQTT client instance
-          mqttClient = new Paho.MQTT.Client(brokerAddress, brokerPort, clientId);
-
-          // Set callback handlers
-          mqttClient.onConnectionLost = onConnectionLost;
-          mqttClient.onMessageArrived = onMessageArrived;
-
-          // Connect with SSL for WebSockets
-          mqttClient.connect({
-            useSSL: true,
-            timeout: 3,
-            onSuccess: function() {
-              isConnected = true;
-              $("#connection-status")
-                .text("Connected")
-                .removeClass("connecting disconnected")
-                .addClass("connected");
-
-              // Subscribe to all topics for this project
-              const topicBase = "worker/" + projectId + "/#";
-              mqttClient.subscribe(topicBase);
-              logMessage("Connected to MQTT broker");
-              logMessage("Subscribed to: " + topicBase);
-            },
-            onFailure: function(e) {
-              isConnected = false;
-              $("#connection-status")
-                .text("Connection Failed")
-                .removeClass("connecting connected")
-                .addClass("disconnected");
-              logMessage("Connection failed: " + e.errorMessage);
-            }
-          });
-        } catch (error) {
-          logMessage("Error creating MQTT client: " + error.message);
-        }
-      }
-
-      // Handle connection lost
-      function onConnectionLost(responseObject) {
-        isConnected = false;
-        if (responseObject.errorCode !== 0) {
-          $("#connection-status")
-            .text("Disconnected")
-            .removeClass("connecting connected")
-            .addClass("disconnected");
-          logMessage("Connection lost: " + responseObject.errorMessage);
-        }
-      }
-
-      // Process incoming messages
-      function onMessageArrived(message) {
-        const topic = message.destinationName;
-        const payload = message.payloadString;
-
-        // Log the received message
-        logMessage("Received: " + topic + " = " + payload);
-
-        // Parse the topic parts
-        // Format: worker/project_id/measurement_type/worker_id
-        const parts = topic.split('/');
-        if (parts.length < 4) return;
-
-        const measurementType = parts[2];
-        const workerId = parts[3];
-        
-        // Extract floor from worker ID (assumes worker IDs are like "floor1_worker1")
-        let floorId = "default";
-        
-        // Check if worker ID contains floor information
-        if (workerId.toLowerCase().includes("floor")) {
-          const floorMatch = workerId.match(/floor(\d+)/i);
-          if (floorMatch) {
-            floorId = "floor" + floorMatch[1];
-          }
-        } else if (workerId.includes("_")) {
-          // Format might be "floor1_worker1"
-          const idParts = workerId.split('_');
-          if (idParts.length > 1 && idParts[0].toLowerCase().includes("floor")) {
-            floorId = idParts[0];
-          }
-        }
-        
-        // Create floor entry if doesn't exist
-        if (!workerData[floorId]) {
-          workerData[floorId] = {};
-        }
-        
-        // Create worker entry if doesn't exist
-        if (!workerData[floorId][workerId]) {
-          workerData[floorId][workerId] = {
-            heartrate: "N/A",
-            battery: "N/A",
-            falldetect: "OK",
-            lastUpdate: new Date()
-          };
-        }
-        
-        // Update worker's last update time
-        workerData[floorId][workerId].lastUpdate = new Date();
-        
-        // Update the appropriate field based on message type
-        switch (measurementType) {
-          case "heartrate":
-            workerData[floorId][workerId].heartrate = payload;
-            break;
-          case "battery":
-            workerData[floorId][workerId].battery = payload;
-            break;
-          case "fall":
-            const oldStatus = workerData[floorId][workerId].falldetect;
-            const newStatus = payload.includes("Fallen") || payload === "Fallen" ? "Fallen" : "OK";
-            workerData[floorId][workerId].falldetect = newStatus;
-            
-            // Check if status changed from OK to Fallen
-            if (oldStatus !== "Fallen" && newStatus === "Fallen") {
-              logMessage("⚠️ EMERGENCY: " + workerId + " has fallen!");
-            }
-            break;
-          case "status":
-            // Update online status if needed
-            break;
-        }
-        
-        // Update the dashboard with new data
-        updateDashboard();
-        
-        // Update emergency status
-        updateEmergencyStatus();
-      }
-
-      // Update dashboard with current data
       function updateDashboard() {
-        // Process each floor
-        for (const floorId in workerData) {
-          const floorData = workerData[floorId];
+        $.getJSON("/api/data", function (data) {
+          // Track which floors/workers we've processed to detect removals
+          const processedFloors = new Set();
+          const processedWorkers = new Set();
 
-          // Format floor ID for display
-          let displayFloorId = floorId.toLowerCase().startsWith("floor")
-            ? "Floor " + floorId.replace(/floor/i, "")
-            : "Floor " + floorId;
+          // Process each floor
+          for (const floorId in data) {
+            processedFloors.add(floorId);
+            const floorData = data[floorId];
 
-          // Check if this floor section already exists
-          if (!elementRefs.floors[floorId]) {
-            // Floor is new, create it
-            const floorSection = $("#floor-template")
-              .clone()
-              .removeClass("template");
-            floorSection.find(".floor-id").text(displayFloorId);
-            $("#dashboard-container").append(floorSection);
+            // Format floor ID for display
+            let displayFloorId = floorId.toLowerCase().startsWith("floor")
+              ? "Floor " + floorId.replace(/floor/i, "")
+              : "Floor " + floorId;
 
-            // Store reference to this floor
-            elementRefs.floors[floorId] = floorSection;
-          }
-
-          // Process each worker on this floor
-          for (const workerId in floorData) {
-            const workerKey = `${floorId}_${workerId}`;
-            const worker = floorData[workerId];
-
-            if (!elementRefs.workers[workerKey]) {
-              // Worker is new, create card
-              const workerCard = $("#worker-template")
+            // Check if this floor section already exists
+            if (!elementRefs.floors[floorId]) {
+              // Floor is new, create it
+              const floorSection = $("#floor-template")
                 .clone()
                 .removeClass("template");
-              workerCard.find(".worker-id").text(workerId);
+              floorSection.find(".floor-id").text(displayFloorId);
+              $("#dashboard-container").append(floorSection);
 
-              // Add the worker card to its floor section
-              elementRefs.floors[floorId]
-                .find(".floor-workers")
-                .append(workerCard);
-
-              // Store reference to this worker
-              elementRefs.workers[workerKey] = workerCard;
+              // Store reference to this floor
+              elementRefs.floors[floorId] = floorSection;
+              elementRefs.workers[floorId] = {};
             }
 
-            // Update worker card
-            const workerCard = elementRefs.workers[workerKey];
+            // Process each worker on this floor
+            for (const workerId in floorData) {
+              const workerKey = `${floorId}_${workerId}`;
+              processedWorkers.add(workerKey);
 
-            // Update sensor values
-            workerCard.find(".heartrate").text(worker.heartrate || "N/A");
-            workerCard.find(".battery").text(worker.battery || "N/A");
-            
-            // Update last update time if available
-            if (worker.lastUpdate) {
-              workerCard.find(".last-update").text(worker.lastUpdate.toLocaleTimeString());
-            }
+              const worker = floorData[workerId];
+              const workerHasChanged =
+                !previousData[floorId] ||
+                !previousData[floorId][workerId] ||
+                JSON.stringify(previousData[floorId][workerId]) !==
+                  JSON.stringify(worker);
 
-            // Update fall status with enhanced visualization
-            const isFallen = worker.falldetect === "Fallen";
-            const statusSpan = workerCard.find(".status");
+              if (!elementRefs.workers[workerKey]) {
+                // Worker is new, create card
+                const workerCard = $("#worker-template")
+                  .clone()
+                  .removeClass("template");
+                workerCard.find(".worker-id").text(workerId);
 
-            if (isFallen) {
-              // Visual changes for fallen worker
-              workerCard.addClass("worker-fallen");
-              statusSpan
-                .removeClass("status-ok")
-                .addClass("status-alert")
-                .text("FALLEN!");
-              workerCard.find(".emergency-icon").removeClass("hidden");
-              workerCard.find(".emergency-banner").removeClass("hidden");
-            } else {
-              // Visual changes for standing worker
-              workerCard.removeClass("worker-fallen");
-              statusSpan
-                .removeClass("status-alert")
-                .addClass("status-ok")
-                .text("OK");
-              workerCard.find(".emergency-icon").addClass("hidden");
-              workerCard.find(".emergency-banner").addClass("hidden");
+                // Add the worker card to its floor section
+                elementRefs.floors[floorId]
+                  .find(".floor-workers")
+                  .append(workerCard);
+
+                // Store reference to this worker
+                elementRefs.workers[workerKey] = workerCard;
+              }
+
+              // Only update worker card if data changed
+              if (workerHasChanged) {
+                const workerCard = elementRefs.workers[workerKey];
+
+                // Update sensor values
+                workerCard.find(".heartrate").text(worker.heartrate || "N/A");
+                workerCard.find(".battery").text(worker.battery || "N/A");
+
+                // Update fall status
+                const isFallen = worker.falldetect === "Fallen";
+                const statusSpan = workerCard.find(".status");
+
+                if (isFallen) {
+                  workerCard.addClass("alert");
+                  statusSpan
+                    .removeClass("status-ok")
+                    .addClass("status-alert")
+                    .text("FALLEN!");
+                } else {
+                  workerCard.removeClass("alert");
+                  statusSpan
+                    .removeClass("status-alert")
+                    .addClass("status-ok")
+                    .text("OK");
+                }
+              }
             }
           }
-        }
-      }
 
-      // Disconnect from MQTT
-      function disconnectMQTT() {
-        if (mqttClient && isConnected) {
-          mqttClient.disconnect();
-          $("#connection-status")
-            .text("Disconnected")
-            .removeClass("connected connecting")
-            .addClass("disconnected");
-          logMessage("Disconnected from MQTT broker");
-        }
-      }
-
-      // Helper function to log messages
-      function logMessage(message) {
-        const now = new Date();
-        const timestamp = now.toLocaleTimeString();
-        $("#log-container").append(
-          `<div class="log-entry"><span class="timestamp">${timestamp}</span>${message}</div>`
-        );
-        // Auto-scroll to bottom
-        const logContainer = document.getElementById("log-container");
-        logContainer.scrollTop = logContainer.scrollHeight;
-      }
-
-      // Set up event listeners
-      $(document).ready(function() {
-        $("#connect-btn").click(connectMQTT);
-        $("#disconnect-btn").click(disconnectMQTT);
-        
-        // Sound toggle
-        $("#sound-toggle").change(function() {
-          emergencySoundEnabled = $(this).is(":checked");
-          if (!emergencySoundEnabled) {
-            stopEmergencySound();
+          // Remove workers that no longer exist in the data
+          for (const workerKey in elementRefs.workers) {
+            if (workerKey !== "undefined" && !processedWorkers.has(workerKey)) {
+              elementRefs.workers[workerKey].remove();
+              delete elementRefs.workers[workerKey];
+            }
           }
+
+          // Remove floors that no longer exist in the data
+          for (const floorId in elementRefs.floors) {
+            if (!processedFloors.has(floorId)) {
+              elementRefs.floors[floorId].remove();
+              delete elementRefs.floors[floorId];
+            }
+          }
+
+          // Update previous data reference
+          previousData = JSON.parse(JSON.stringify(data));
         });
-        
-        // Test alarm button
-        $("#test-alarm").click(function() {
-          if (emergencySoundEnabled) {
-            if (alarmAudio.paused) {
-              playEmergencySound();
-              $(this).text("Stop Test");
-            } else {
-              stopEmergencySound();
-              $(this).text("Test Alarm");
-            }
-          }
-        });
-        
-        // Make test button visible for admins
-        setTimeout(function() {
-          $("#test-alarm").removeClass("hidden");
-        }, 5000);
-        
-        // Initial log message
-        logMessage("Dashboard initialized. Click Connect to start receiving data.");
-        
-        // Connect automatically
-        connectMQTT();
-      });
+      }
+
+      // Optimize polling with dynamic delays
+      function scheduleNextUpdate() {
+        setTimeout(() => {
+          const startTime = performance.now();
+          updateDashboard();
+          const elapsed = performance.now() - startTime;
+
+          // Schedule next update with dynamic delay (min 50ms)
+          const nextDelay = Math.max(50, 100 - elapsed);
+          scheduleNextUpdate();
+        }, 50);
+      }
+
+      // Initial update and start polling
+      updateDashboard();
+      scheduleNextUpdate();
     </script>
   </body>
 </html>
