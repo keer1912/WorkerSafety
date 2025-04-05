@@ -1,6 +1,7 @@
-// WORKER SAFETY SYSTEM - WORKER A (Fall Detection)
+// WORKER SAFETY SYSTEM - WORKER A (Fall Detection with Emergency Response)
 // This device is worn by the worker and detects falls
 // Communicates via ESP-NOW to Worker B and MQTT to dashboard
+// Now enhanced with emergency response capabilities
 
 #include <M5StickCPlus.h>
 #include <esp_now.h>
@@ -17,10 +18,10 @@ const char* ssid = "Xiaomi Nya";          // Your Wi-Fi name
 const char* password = "itamenekos";      // Your Wi-Fi password
 
 // MQTT Configuration
-const char* mqtt_server = "192.168.60.52";  // Public MQTT broker
-const int mqtt_port = 1883;                      // Standard MQTT port
-const char* mqtt_user = "iot_proj";                      // Leave empty if no auth
-const char* mqtt_password = "1234";                  // Leave empty if no auth
+const char* mqtt_server = "192.168.60.52";  // MQTT broker IP
+const int mqtt_port = 1883;                 // Standard MQTT port
+const char* mqtt_user = "iot_proj";         // MQTT username
+const char* mqtt_password = "1234";         // MQTT password
 
 // Worker Identification for MQTT Dashboard
 const int floor_id = 1;      // Floor number
@@ -96,6 +97,11 @@ bool possibleFall = false;
 unsigned long fallDetectionTime = 0;
 const int debounceTime = 2000;  // Prevent multiple detections
 
+// Emergency state tracking (added from Worker B)
+bool emergencyActive = false;
+unsigned long emergencyStartTime = 0;
+const unsigned long emergencyDisplayTime = 60000; // Show emergency for 1 minute
+
 // Moving average for acceleration smoothing
 const int movingAverageWindow = 10;
 float accelMagnitudeHistory[movingAverageWindow];
@@ -119,7 +125,7 @@ bool mqttConnected = false;
 
 // Callback function for heart rate sensor
 void onBeatDetected() {
-  if (userState != FALLEN) {
+  if (userState != FALLEN && !emergencyActive) {
     M5.Lcd.fillRect(0, 100, 240, 10, BLACK);
     M5.Lcd.setCursor(0, 100);
     M5.Lcd.setTextColor(MAGENTA, BLACK);
@@ -175,7 +181,7 @@ int getBatteryPercentage() {
 // Send emergency fall detection notification (ESP-NOW)
 void sendFallEmergency() {
   outgoingData.messageType = 4; // Fall emergency notification
-  sprintf(outgoingData.message, "EMERGENCY: WORKER FALLEN!");
+  sprintf(outgoingData.message, "EMERGENCY: WORKER A FALLEN IN FLOOR %d!", floor_id);
   outgoingData.value = accelMagnitude; // Send impact force
   outgoingData.keyIndex = keyMgr.keyIndex;
   outgoingData.heartRate = heartRate; // Include heart rate in emergency message
@@ -228,7 +234,14 @@ void publishSensorData() {
   publishFallStatus();
   
   // Send consolidated data to actl topic as JSON
-  String jsonPayload = "{\"status\":\"" + String(userState == FALLEN ? "Fallen" : "OK") + 
+  String status = "OK";
+  if (userState == FALLEN) {
+    status = "Fallen";
+  } else if (emergencyActive) {
+    status = "Responding";
+  }
+  
+  String jsonPayload = "{\"status\":\"" + status + 
                        "\",\"floor\":" + String(floor_id) + 
                        ",\"worker\":" + String(worker_id) + 
                        ",\"heartRate\":" + String(heartRate) + 
@@ -238,13 +251,15 @@ void publishSensorData() {
 
 // Callback function called when data is sent via ESP-NOW
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  M5.Lcd.setCursor(0, 120);
-  if (status == ESP_NOW_SEND_SUCCESS) {
-    M5.Lcd.setTextColor(GREEN, BLACK);
-    M5.Lcd.println("Sent OK    ");
-  } else {
-    M5.Lcd.setTextColor(RED, BLACK);
-    M5.Lcd.println("Send FAILED");
+  if (userState != FALLEN && !emergencyActive) {
+    M5.Lcd.setCursor(0, 120);
+    if (status == ESP_NOW_SEND_SUCCESS) {
+      M5.Lcd.setTextColor(GREEN, BLACK);
+      M5.Lcd.println("Sent OK    ");
+    } else {
+      M5.Lcd.setTextColor(RED, BLACK);
+      M5.Lcd.println("Send FAILED");
+    }
   }
 }
 
@@ -252,7 +267,70 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   memcpy(&incomingData, data, sizeof(incomingData));
   
-  // Handle emergency response
+  // Check if this is an emergency notification (added from Worker B)
+  if (incomingData.messageType == 4) {
+    // Only process if not already fallen ourselves
+    if (userState != FALLEN) {
+      // Display emergency alert
+      M5.Lcd.fillScreen(RED);
+      M5.Lcd.setCursor(0, 0);
+      M5.Lcd.setTextColor(WHITE, RED);
+      M5.Lcd.setTextSize(2);
+      //M5.Lcd.println("!! EMERGENCY !!");
+      M5.Lcd.println(incomingData.message);
+      M5.Lcd.println("WORKER B NEEDS HELP");
+      M5.Lcd.setTextSize(1);
+      
+      // Display vital information
+      if (incomingData.value > 0) {
+        M5.Lcd.printf("Impact force: %.2f\n", incomingData.value);
+      }
+      M5.Lcd.printf("Heart Rate: %.1f BPM\n", incomingData.heartRate);
+      M5.Lcd.printf("Battery: %d%%\n", incomingData.batteryLevel);
+      
+      // Play alarm sound
+      for (int i = 0; i < 5; i++) {
+        M5.Beep.beep();
+        delay(300);
+        M5.Beep.mute();
+        delay(100);
+      }
+      
+      // Set emergency state
+      emergencyActive = true;
+      emergencyStartTime = millis();
+      
+      // Send acknowledgment
+      outgoingData.messageType = 2;
+      sprintf(outgoingData.message, "Emergency received, help coming");
+      esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+      
+      // Publish emergency response status to MQTT
+      if (mqttConnected) {
+        mqttClient.publish(status_topic.c_str(), "Responding");
+        
+        // Send consolidated data to actl topic
+        String jsonPayload = "{\"status\":\"Responding\"," 
+                           "\"floor\":" + String(floor_id) + "," 
+                           "\"worker\":" + String(worker_id) + "," 
+                           "\"emergency\":\"Worker " + String(floor_id) + "_" + String(worker_id+1) + " fallen\"," 
+                           "\"heartRate\":" + String(heartRate) + "," 
+                           "\"battery\":" + String(batteryLevel) + "}";
+        mqttClient.publish(actl_topic.c_str(), jsonPayload.c_str());
+      }
+      
+      return;
+    } else {
+      // We're fallen too, but still acknowledge
+      outgoingData.messageType = 2;
+      sprintf(outgoingData.message, "I'm fallen too, can't help");
+      esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+    }
+    
+    return;
+  }
+  
+  // Handle emergency response acknowledgment
   if (incomingData.messageType == 2 && userState == FALLEN) {
     M5.Lcd.fillRect(0, 80, 240, 40, BLACK);
     M5.Lcd.setCursor(0, 80);
@@ -263,17 +341,135 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     return;
   }
   
-  // Handle regular messages
-  if (incomingData.messageType == 0) {
+  // Handle regular messages (only if not in emergency or fallen state)
+  if (incomingData.messageType == 0 && userState != FALLEN && !emergencyActive) {
     M5.Lcd.fillRect(0, 80, 240, 40, BLACK);
     M5.Lcd.setCursor(0, 80);
     M5.Lcd.setTextColor(YELLOW, BLACK);
     M5.Lcd.println("Received from Worker B:");
     M5.Lcd.setTextColor(WHITE, BLACK);
     M5.Lcd.printf("Status: %s\n", incomingData.message);
+    
+    // Display vital information
+    if (incomingData.heartRate > 0) {
+      M5.Lcd.printf("Heart Rate: %.1f BPM\n", incomingData.heartRate);
+      
+      // Alert if heart rate is abnormal
+      if (incomingData.heartRate > 100) {
+        M5.Lcd.setTextColor(RED, BLACK);
+        M5.Lcd.println("WARNING: High Heart Rate!");
+        M5.Lcd.setTextColor(WHITE, BLACK);
+      } else if (incomingData.heartRate < 50) {
+        M5.Lcd.setTextColor(RED, BLACK);
+        M5.Lcd.println("WARNING: Low Heart Rate!");
+        M5.Lcd.setTextColor(WHITE, BLACK);
+      }
+    }
   }
   
   lastReceivedTime = millis();
+}
+
+// Check if emergency state needs to be cleared (added from Worker B)
+void checkEmergencyState() {
+  if (emergencyActive) {
+    // If Button A is pressed or emergency display time has elapsed
+    if (M5.BtnA.wasPressed() || (millis() - emergencyStartTime > emergencyDisplayTime)) {
+      emergencyActive = false;
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setTextSize(1);
+      M5.Lcd.setCursor(0, 0);
+      M5.Lcd.println("Worker Safety System");
+      M5.Lcd.println("Worker A (Fall Detection)");
+      M5.Lcd.println("Emergency acknowledged");
+      M5.Lcd.println("Resuming normal operation");
+      
+      // Update MQTT status to show normal operation
+      if (mqttConnected) {
+        mqttClient.publish(status_topic.c_str(), "OK");
+        
+        // Send consolidated data to actl topic
+        String jsonPayload = "{\"status\":\"OK\"," 
+                           "\"floor\":" + String(floor_id) + "," 
+                           "\"worker\":" + String(worker_id) + "," 
+                           "\"heartRate\":" + String(heartRate) + "," 
+                           "\"battery\":" + String(batteryLevel) + "}";
+        mqttClient.publish(actl_topic.c_str(), jsonPayload.c_str());
+      }
+      
+      delay(2000);
+      
+      // Send confirmation of assistance to Worker B
+      outgoingData.messageType = 2;
+      sprintf(outgoingData.message, "Help is on the way");
+      esp_now_send(workerBMacAddress, (uint8_t *) &outgoingData, sizeof(outgoingData));
+    }
+  }
+}
+
+// Fall detection function
+void detectFall() {
+  // Only check for falls if not already in emergency mode (responding to other worker)
+  if (emergencyActive) return;
+  
+  // Read accelerometer data
+  M5.IMU.getAccelData(&accX, &accY, &accZ);
+  accelMagnitude = sqrt(accX*accX + accY*accY + accZ*accZ);
+  
+  // Update moving average
+  accelMagnitudeHistory[accelMagnitudeIndex] = accelMagnitude;
+  accelMagnitudeIndex = (accelMagnitudeIndex + 1) % movingAverageWindow;
+  accelMagnitudeAverage = 0;
+  for (int i = 0; i < movingAverageWindow; i++) {
+    accelMagnitudeAverage += accelMagnitudeHistory[i];
+  }
+  accelMagnitudeAverage /= movingAverageWindow;
+  
+  // Fall detection logic
+  switch (userState) {
+    case STANDING:
+      if (accelMagnitude > impactThreshold) {
+        userState = FALLEN;
+        M5.Lcd.fillScreen(RED);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.setTextColor(WHITE, RED);
+        M5.Lcd.setTextSize(2);
+        M5.Lcd.println("FALL DETECTED!");
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.printf("Impact: %.2f\n", accelMagnitude);
+        M5.Lcd.printf("HR: %.1f BPM\n", heartRate);
+        
+        M5.Beep.beep();  // Alert sound
+        delay(1000);
+        M5.Beep.mute();
+        
+        // Send emergency message to Worker B via ESP-NOW
+        sendFallEmergency();
+        
+        // Update fall status on MQTT dashboard
+        publishFallStatus();
+        
+        delay(debounceTime);
+      }
+      break;
+
+    case FALLEN:
+      // Manual recovery button (press A to stand up)
+      if (M5.BtnA.wasPressed()) {
+        userState = STANDING;
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.println("Worker Safety System");
+        M5.Lcd.println("Worker A (Fall Detection)");
+        M5.Lcd.println("RECOVERED!");
+        
+        // Update fall status on MQTT dashboard
+        publishFallStatus();
+        
+        delay(1000);
+      }
+      break;
+  }
 }
 
 // Connect to WiFi network
@@ -333,66 +529,6 @@ void connectMQTT() {
   } else {
     mqttConnected = false;
     M5.Lcd.println("MQTT connection failed");
-  }
-}
-
-// Fall detection function
-void detectFall() {
-  // Read accelerometer data
-  M5.IMU.getAccelData(&accX, &accY, &accZ);
-  accelMagnitude = sqrt(accX*accX + accY*accY + accZ*accZ);
-  
-  // Update moving average
-  accelMagnitudeHistory[accelMagnitudeIndex] = accelMagnitude;
-  accelMagnitudeIndex = (accelMagnitudeIndex + 1) % movingAverageWindow;
-  accelMagnitudeAverage = 0;
-  for (int i = 0; i < movingAverageWindow; i++) {
-    accelMagnitudeAverage += accelMagnitudeHistory[i];
-  }
-  accelMagnitudeAverage /= movingAverageWindow;
-  
-  // Fall detection logic
-  switch (userState) {
-    case STANDING:
-      if (accelMagnitude > impactThreshold) {
-        userState = FALLEN;
-        M5.Lcd.fillScreen(RED);
-        M5.Lcd.setCursor(0, 0);
-        M5.Lcd.setTextColor(WHITE, RED);
-        M5.Lcd.setTextSize(2);
-        M5.Lcd.println("FALL DETECTED!");
-        M5.Lcd.setTextSize(1);
-        M5.Lcd.printf("Impact: %.2f\n", accelMagnitude);
-        M5.Lcd.printf("HR: %.1f BPM\n", heartRate);
-        
-        M5.Beep.beep();  // Alert sound
-        delay(1000);
-        M5.Beep.mute();
-        
-        // Send emergency message to Worker B via ESP-NOW
-        sendFallEmergency();
-        
-        // Update fall status on MQTT dashboard
-        publishFallStatus();
-        
-        delay(debounceTime);
-      }
-      break;
-
-    case FALLEN:
-      // Manual recovery button (press A to stand up)
-      if (M5.BtnA.wasPressed()) {
-        userState = STANDING;
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.setCursor(0, 0);
-        M5.Lcd.println("RECOVERED!");
-        
-        // Update fall status on MQTT dashboard
-        publishFallStatus();
-        
-        delay(1000);
-      }
-      break;
   }
 }
 
@@ -489,7 +625,7 @@ void setup() {
   
   // Show instructions
   M5.Lcd.setCursor(0, 130);
-  M5.Lcd.println("Btn A: Recover from fall");
+  M5.Lcd.println("Btn A: Recover/acknowledge");
   M5.Lcd.println("Btn B: Manual alert");
 }
 
@@ -528,8 +664,8 @@ void loop() {
     //heartRate = pox.getHeartRate();
     heartRate = random(50,120);
     
-    // Update display with heart rate if not in fallen state
-    if (userState != FALLEN) {
+    // Update display with heart rate if not in fallen state or emergency state
+    if (userState != FALLEN && !emergencyActive) {
       M5.Lcd.fillRect(0, 60, 240, 10, BLACK);
       M5.Lcd.setCursor(0, 60);
       M5.Lcd.printf("HR: %.1f BPM\n", heartRate);
@@ -541,21 +677,26 @@ void loop() {
     lastBatteryCheck = millis();
     batteryLevel = getBatteryPercentage();
     
-    // Update display with battery level if not in fallen state
-    if (userState != FALLEN) {
+    // Update display with battery level if not in fallen state or emergency state
+    if (userState != FALLEN && !emergencyActive) {
       M5.Lcd.fillRect(0, 70, 240, 10, BLACK);
       M5.Lcd.setCursor(0, 70);
       M5.Lcd.printf("Batt: %d%%\n", batteryLevel);
     }
   }
   
-  // Check for falls
-  detectFall();
+  // Check for falls (only if not in emergency response mode)
+  if (!emergencyActive) {
+    detectFall();
+  } else {
+    // Check if emergency response state needs to be cleared
+    checkEmergencyState();
+  }
   
   // Send periodic status update via ESP-NOW (every 5 seconds)
   if (millis() - lastSentTime > 5000) {
-    // Only send if not in FALLEN state
-    if (userState != FALLEN) {
+    // Only send if not in FALLEN state or emergency state
+    if (userState != FALLEN && !emergencyActive) {
       outgoingData.messageType = 0;
       outgoingData.counter++;
       sprintf(outgoingData.message, "Status: OK, Count: %d", outgoingData.counter);
@@ -581,8 +722,8 @@ void loop() {
     publishSensorData();
   }
   
-  // Manual alert button (Button 😎
-  if (M5.BtnB.wasPressed() && userState != FALLEN) {
+  // Manual alert button (Button B) - only if not already in emergency or fallen state
+  if (M5.BtnB.wasPressed() && userState != FALLEN && !emergencyActive) {
     // Send alert via ESP-NOW
     outgoingData.messageType = 4; // Emergency notification
     sprintf(outgoingData.message, "MANUAL ALERT: HELP NEEDED!");
