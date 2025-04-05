@@ -1,4 +1,36 @@
 # WorkerSafety
+This project is a wearable IoT-based safety device using M5StickC Plus that automates fall detection and emergency alert systems.  
+
+## Hardware and Software Components
+### Hardware Components
+1. **Microcontrollers:** M5StickC Plus, Arduino Maker Uno
+2. **Sensors:** Built-in M5StickC Plus accelerometer, MAX30100 Heart Rate Sensor
+3. **Actuators:** Built-in M5StickC Plus buzzer
+4. **Communication Devices:** Cytron LoRa RFM Shield
+
+### Software Components
+1. **Communication Protocols:** ESP-NOW, MQTT, LoRa
+2. **Dashboard:** Flask
+3. **IDEs:** Arduino IDe, Visual Studio Code
+
+## Project Structure
+```
+WorkerSafety
+├── esp_now_nodeA/               # Files for ESP-NOW Node A
+├── esp_now_nodeB/               # Files for ESP-NOW Node B
+├── esp_now_receiver/            # Files for ESP-NOW Receiver
+├── esp_now_receiver/            # Files for ESP-NOW Sender
+├── esp_now_receiver/            # Files for ESP-NOW Sender
+├── fall_detector/               # Fall detector codes
+├── lora/                        # Files for LoRa
+├── templates/                   # HTML files for dashboard
+├── app.py                       # Site A dashboard
+├── centralApp.py                # Central Dashboard
+├── mqtt_sibscriber.py           # MQTT script
+├── README.md                    # Project documentation
+└── requirements.txt             # Python dependencies
+```
+
 ## Fall Detector
 Using the M5STICKCPlus this program detects falls using its inbuilt accelerometer. Then the data is sent over to a pi which is set up as the supervisor's machine on a construction worksite to know which worker has fell down.
 
