@@ -42,12 +42,12 @@
         font-weight: bold;
       }
       .template {
-        display: none;
+        display: grid;
       }
     </style>
   </head>
   <body>
-    <h1>Worker Safety Dashboard</h1>
+    <h1>[HQ] Worker Safety Dashboard</h1>
   
     <!-- Main container for dynamic content -->
     <div id="dashboard-container"></div>
@@ -67,12 +67,13 @@
       </div>
   
       <!-- Worker template -->
-      <div id="worker-template" class="worker-card">
+      <div id="worker-template" class="worker-card" style="display: none;">
         <div class="worker-name">Worker: <span class="worker-id"></span></div>
         <div class="sensor-value">
           Heart Rate: <span class="heartrate"></span> bpm
         </div>
-        <div class="sensor-value">Battery: <span class="battery"></span>%</div>
+        <div class="sensor-value">Battery: <span class="battery"></span>%
+        </div>
         <div class="sensor-value">
           Fall Status: <span class="status"></span>
         </div>
@@ -164,9 +165,7 @@
   
                 if (!elementRefs.workers[siteId][workerKey]) {
                   // Worker is new, create card
-                  const workerCard = $("#worker-template")
-                    .clone()
-                    .removeClass("template");
+                  const workerCard = $('#worker-template').clone().removeAttr('id').show();
                   workerCard.find(".worker-id").text(workerId);
   
                   // Add the worker card to its floor section

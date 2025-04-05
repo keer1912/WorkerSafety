@@ -1,22 +1,30 @@
 # CENTRAL DASHBOARD SETUP
-# Change line 84 to COM port connected to RX LoRa
+# Change line 9 to COM port connected to RX LoRa
 
 from flask import Flask, render_template, jsonify
 import threading
 import serial
 import time
 
+PORT = 'COM3'
 app = Flask(__name__)
 ser6 = None
 
 data_store = {
-    # Floor ID → Worker ID → Sensor type → Value
+    # Site ID → Floor ID → Worker ID → Sensor type → Value
     # Example data
-    # "1": {
-    #     "worker1": {
-    #         "falldetect": "0",
-    #         "heartrate": "75",
-    #         "battery": "90"
+    # "SITE_A": {
+    #     "floor1": {
+    #         "worker1": {
+    #             "falldetect": "0",
+    #             "heartrate": "75",
+    #             "battery": "90"
+    #         },
+    #         "worker2": {
+    #             "falldetect": "0",
+    #             "heartrate": "60",
+    #             "battery": "80"
+    #         }
     #     }
     # }
 }
@@ -71,18 +79,22 @@ def read_ser6():
     global ser_com6
     while True:
         if ser_com6 is not None and ser_com6.in_waiting > 0:
-            message = ser_com6.readline().decode('utf-8').strip()
-            
-            # Filter to only print the specific message
-            if "Got valid message:" in message:
-                print(f"Received from COM6: {message}")
-                handle_message(message)
-
+            try:
+                # Decode with error handling
+                message = ser_com6.readline().decode('utf-8', errors='replace').strip()
+                
+                # Filter to only print the specific message
+                if "Got valid message:" in message:
+                    print(f"Received from {PORT}: {message}")
+                    handle_message(message)
+            except Exception as e:
+                print(f"[EXCEPTION] in read_ser6: {e}")
+                
 def ser6_thread():
     try:
         global ser_com6
-        ser_com6 = serial.Serial('COM6', 9600, timeout=1)
-        print("Serial port COM6 opened successfully")
+        ser_com6 = serial.Serial(PORT, 9600, timeout=1)
+        print(f"Serial port {PORT} opened successfully")
 
         serial_thread = threading.Thread(target=read_ser6, daemon=True)
         serial_thread.start()
