@@ -179,7 +179,7 @@ int getBatteryPercentage() {
 // Send emergency fall detection notification (ESP-NOW)
 void sendFallEmergency() {
   outgoingData.messageType = 4; // Fall emergency notification
-  sprintf(outgoingData.message, "EMERGENCY: WORKER B FALLEN!");
+  sprintf(outgoingData.message, "EMERGENCY: WORKER B FALLEN IN FLOOR %d!", floor_id);
   outgoingData.value = accelMagnitude; // Send impact force
   outgoingData.keyIndex = keyMgr.keyIndex;
   outgoingData.heartRate = heartRate;
@@ -399,7 +399,7 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
       M5.Lcd.setCursor(0, 0);
       M5.Lcd.setTextColor(WHITE, RED);
       M5.Lcd.setTextSize(2);
-      M5.Lcd.println("!! EMERGENCY !!");
+      //M5.Lcd.println("!! EMERGENCY !!");
       M5.Lcd.println(incomingData.message);
       M5.Lcd.println("WORKER A NEEDS HELP");
       M5.Lcd.setTextSize(1);
