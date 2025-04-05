@@ -17,14 +17,14 @@ const char* ssid = "Xiaomi Nya";          // Your Wi-Fi name
 const char* password = "itamenekos";      // Your Wi-Fi password
 
 // MQTT Configuration
-const char* mqtt_server = "test.mosquitto.org";  // Public MQTT broker
+const char* mqtt_server = "192.168.60.52";  // Public MQTT broker
 const int mqtt_port = 1883;                      // Standard MQTT port
-const char* mqtt_user = "";                      // Leave empty if no auth
-const char* mqtt_password = "";                  // Leave empty if no auth
+const char* mqtt_user = "iot_proj";                      // Leave empty if no auth
+const char* mqtt_password = "1234";                  // Leave empty if no auth
 
 // Worker Identification for MQTT Dashboard
-const char* worker_id = "floor1_worker1";  // Format: floor#_worker# (change for each device)
-const char* project_id = "SIT_workersafety";  // Match dashboard project ID
+const int floor_id = 1;      // Floor number
+const int worker_id = 1;     // Worker number
 
 // REPLACE WITH THE MAC Address of Worker B's device (ESP-NOW communication)
 uint8_t workerBMacAddress[] = {0x4C, 0x75, 0x25, 0xCB, 0x90, 0x88};  // Replace with actual MAC
@@ -42,12 +42,12 @@ Preferences preferences;
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
-// MQTT topics (formatted for dashboard compatibility)
-String base_topic;
+// MQTT topics (formatted according to required structure)
 String heartrate_topic;
 String battery_topic;
 String fall_topic;
 String status_topic;
+String actl_topic;  // Added as per requirement
 
 // Define a structure for key management
 typedef struct {
@@ -197,9 +197,16 @@ void sendFallEmergency() {
 void publishFallStatus() {
   if (!mqttConnected) return;
 
-  // Publish fall status (format compatible with dashboard)
+  // Publish fall status with the specific "Fallen" message as required
   if (userState == FALLEN) {
     mqttClient.publish(fall_topic.c_str(), "Fallen");
+    
+    // Also publish to the actl topic for the central system
+    String jsonPayload = "{\"status\":\"Fallen\",\"floor\":" + String(floor_id) + 
+                         ",\"worker\":" + String(worker_id) + 
+                         ",\"heartRate\":" + String(heartRate) + 
+                         ",\"battery\":" + String(batteryLevel) + "}";
+    mqttClient.publish(actl_topic.c_str(), jsonPayload.c_str());
   } else {
     mqttClient.publish(fall_topic.c_str(), "OK");
   }
@@ -219,6 +226,14 @@ void publishSensorData() {
   
   // Publish fall status
   publishFallStatus();
+  
+  // Send consolidated data to actl topic as JSON
+  String jsonPayload = "{\"status\":\"" + String(userState == FALLEN ? "Fallen" : "OK") + 
+                       "\",\"floor\":" + String(floor_id) + 
+                       ",\"worker\":" + String(worker_id) + 
+                       ",\"heartRate\":" + String(heartRate) + 
+                       ",\"battery\":" + String(batteryLevel) + "}";
+  mqttClient.publish(actl_topic.c_str(), jsonPayload.c_str());
 }
 
 // Callback function called when data is sent via ESP-NOW
@@ -304,7 +319,7 @@ void connectMQTT() {
   
   // Create a unique client ID
   String clientId = "M5StickC_";
-  clientId += worker_id;
+  clientId += String(floor_id) + "_" + String(worker_id);
   clientId += "_";
   clientId += String(millis() % 1000);
   
@@ -392,12 +407,12 @@ void setup() {
   M5.Lcd.println("Worker Safety System");
   M5.Lcd.println("Worker A (Fall Detection)");
   
-  // Setup MQTT topics for dashboard compatibility
-  base_topic = String("worker/") + project_id;
-  heartrate_topic = base_topic + "/heartrate/" + worker_id;
-  battery_topic = base_topic + "/battery/" + worker_id;
-  fall_topic = base_topic + "/fall/" + worker_id;
-  status_topic = base_topic + "/status/" + worker_id;
+  // Setup MQTT topics according to the required format: /floorid/workerid/...
+  fall_topic = "/" + String(floor_id) + "/" + String(worker_id) + "/falldetect";
+  heartrate_topic = "/" + String(floor_id) + "/" + String(worker_id) + "/heartrate";
+  battery_topic = "/" + String(floor_id) + "/" + String(worker_id) + "/battery";
+  status_topic = "/" + String(floor_id) + "/" + String(worker_id) + "/status";
+  actl_topic = "actl";  // Special topic for the central system
   
   // Initialize random number generator
   randomSeed(analogRead(0));
@@ -510,7 +525,8 @@ void loop() {
   // Check heart rate at regular intervals
   if (millis() - lastHeartRateCheck > heartRateCheckInterval) {
     lastHeartRateCheck = millis();
-    heartRate = pox.getHeartRate();
+    //heartRate = pox.getHeartRate();
+    heartRate = random(50,120);
     
     // Update display with heart rate if not in fallen state
     if (userState != FALLEN) {
