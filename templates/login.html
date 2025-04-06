@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Worker Safety Login</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background-color: #f4f4f4;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
+      .login-container {
+        background-color: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        width: 100%;
+        max-width: 400px;
+      }
+      h1 {
+        text-align: center;
+        color: #333;
+        margin-bottom: 1.5rem;
+      }
+      .form-group {
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-size: 1rem;
+      }
+      button {
+        background-color: #4285f4;
+        color: white;
+        border: none;
+        padding: 0.75rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        width: 100%;
+        font-size: 1rem;
+        margin-top: 1rem;
+      }
+      button:hover {
+        background-color: #3367d6;
+      }
+      .flash-messages {
+        margin-bottom: 1rem;
+      }
+      .flash-message {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 0.75rem;
+        border-radius: 4px;
+        margin-bottom: 0.5rem;
+      }
+      .logo {
+        text-align: center;
+        margin-bottom: 1rem;
+      }
+      .logo img {
+        max-width: 150px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-container">
+      <h1>Admin Login</h1>
+
+      <div class="flash-messages">
+        {% with messages = get_flashed_messages() %} {% if messages %} {% for
+        message in messages %}
+        <div class="flash-message">{{ message }}</div>
+        {% endfor %} {% endif %} {% endwith %}
+      </div>
+
+      <form method="POST" action="{{ url_for('login') }}">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" required />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required />
+        </div>
+
+        <button type="submit">Sign In</button>
+      </form>
+    </div>
+    <script>
+      // Check if this page was loaded after logout
+      if (
+        performance.navigation.type === 1 ||
+        document.referrer.includes("/logout")
+      ) {
+        // Clear browser history
+        window.history.pushState(null, "", window.location.href);
+        window.onpopstate = function () {
+          window.history.pushState(null, "", window.location.href);
+        };
+      }
+    </script>
+  </body>
+</html>
