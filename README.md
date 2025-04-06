@@ -1,6 +1,6 @@
 # WorkerSafety
 
-This project is a wearable IoT-based safety device using M5StickC Plus that automates fall detection and emergency alert systems.
+This project is a wearable IoT-based safety device using M5StickC Plus that automates fall detection and emergency alert systems. Its main features includes detecting falls using accelerometer and automatically sends SOS alerts to site office and HQ. This wearable device also monitors health-related metrics such as heart rate of construction workers. This project aims to reduce emergency response to incidents, enable real-time hazard detection, and provide consistent safety compliance.
 
 ## Hardware and Software Components
 
@@ -16,6 +16,7 @@ This project is a wearable IoT-based safety device using M5StickC Plus that auto
 1. **Communication Protocols:** ESP-NOW, MQTT, LoRa
 2. **Dashboard:** Flask
 3. **IDEs:** Arduino IDe, Visual Studio Code
+4. **MQTT:** Eclipse Mosquitto
 
 ## Project Structure
 
@@ -50,7 +51,7 @@ mosquitto_passwd -c password_file iot_proj
 
 ```
 listener 1883
-allow_anonymous true
+allow_anonymous false
 password_file password_file
 ```
 
@@ -64,8 +65,10 @@ mosquitto -c mosquitto.conf -v
 
 1. Add a `.env` file to the root directory
 2. Setup Amin's username and password in the `.env` file like:
-   `USERNAME = admin`
-   `PASSWORD = admin123`
+```
+USERNAME = admin
+PASSWORD = admin123
+```
 
 #### Setup Site A Dashboard
 
