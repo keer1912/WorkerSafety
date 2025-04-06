@@ -120,29 +120,29 @@ def on_message(client, userdata, msg):
         elif sensor_type == "battery":
             print(f"Worker {worker_id} on floor {floor_id} has battery level: {msg.payload.decode()}%")
 
-# def mqtt_loop():
-#     try:
-#         print("Starting MQTT loop...")
-#         client.loop_forever()
-#     except KeyboardInterrupt:
-#         print("Exiting")
-#         client.disconnect()
+def mqtt_loop():
+    try:
+        print("Starting MQTT loop...")
+        client.loop_forever()
+    except KeyboardInterrupt:
+        print("Exiting")
+        client.disconnect()
 
 # Create MQTT client
-# client = mqtt.Client()
-# client.on_connect = on_connect
-# client.on_message = on_message
+client = mqtt.Client()
+client.on_connect = on_connect
+client.on_message = on_message
 
-# # Set authentication credentials
-# client.username_pw_set("iot_proj", "1234")
+# Set authentication credentials
+client.username_pw_set("iot_proj", "1234")
 
-# print("Connecting to MQTT broker...")
-# # Connect to the broker (change IP)
-# client.connect(BROKER_ADD, 1883, 60)
+print("Connecting to MQTT broker...")
+# Connect to the broker (change IP)
+client.connect(BROKER_ADD, 1883, 60)
 
-# # Start the MQTT client loop in a background thread
-# mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
-# mqtt_thread.start()
+# Start the MQTT client loop in a background thread
+mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
+mqtt_thread.start()
 
 # Read and print COM port to log LoRa messages
 def serial_reader():
