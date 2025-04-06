@@ -64,13 +64,13 @@ mosquitto -c mosquitto.conf -v
 
 1. Add a `.env` file to the root directory
 2. Setup Amin's username and password in the `.env` file like:
-   `USERNAME = admin
-   PASSWORD = admin123`
+   `USERNAME = admin`
+   `PASSWORD = admin123`
 
 #### Setup Site A Dashboard
 
-1. Change lines 12 & 13 to MQTT Broker's IP address and TX LoRa COM PORT respectively
-2. Run `app,py`
+1. Change lines 21 & 22 to MQTT Broker's IP address and TX LoRa COM PORT respectively
+2. Run `app.py`
 
 ```
 python app.py
@@ -78,7 +78,7 @@ python app.py
 
 #### Setup Central Dashboard
 
-1. Change lines 9 to RX LoRa COM PORT
+1. Change lines 11 to RX LoRa COM PORT
 2. Run `centralApp.py`
 
 ```
