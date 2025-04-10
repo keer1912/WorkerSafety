@@ -18,7 +18,7 @@ const char* ssid = "Xiaomi Nya";          // Your Wi-Fi name
 const char* password = "itamenekos";      // Your Wi-Fi password
 
 // MQTT Configuration
-const char* mqtt_server = "192.168.60.52";  // MQTT broker IP
+const char* mqtt_server = "192.168.114.52";  // MQTT broker IP
 const int mqtt_port = 1883;                 // Standard MQTT port
 const char* mqtt_user = "iot_proj";         // MQTT username
 const char* mqtt_password = "1234";         // MQTT password
