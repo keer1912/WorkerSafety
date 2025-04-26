@@ -168,9 +168,7 @@
 
               if (!elementRefs.workers[workerKey]) {
                 // Worker is new, create card
-                const workerCard = $("#worker-template")
-                  .clone()
-                  .removeClass("template");
+                const workerCard = $('#worker-template').clone().removeAttr('id').show();
                 workerCard.find(".worker-id").text(workerId);
 
                 // Add the worker card to its floor section
